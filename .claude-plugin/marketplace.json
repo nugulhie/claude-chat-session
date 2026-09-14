@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "peers",
-      "source": "./plugins/peers",
+      "source": "./marketplace/plugins/peers",
       "description": "동료 Claude Code 세션 간 질문/답변 채널"
     }
   ]
