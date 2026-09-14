@@ -172,7 +172,17 @@ ls -t ~/Library/Caches/claude-cli-nodejs/*/mcp-logs-plugin-peers-peers/*.txt | h
 
 `disconnected (...)` 줄의 괄호 안이 실제 원인입니다.
 
-> `curl`로는 WebSocket을 시험할 수 없습니다. HTTPS에서 HTTP/2로 붙으면 `Upgrade`·`Connection` 헤더가 규격상 제거되어, 토큰이 멀쩡해도 400이 납니다. `doctor.py`를 쓰세요.
+>`curl`로 `/stream`을 찔러 볼 때는 **`--http1.1`을 반드시 붙이세요.** HTTPS에서는 curl이 HTTP/2로 붙는데, HTTP/2는 `Upgrade`·`Connection` 헤더를 규격상 금지하므로 토큰이 멀쩡해도 400 `No WebSocket UPGRADE hdr`가 납니다. 원인을 토큰에서 찾게 되는 대표적인 함정입니다.
+>
+> ```bash
+> curl -i --http1.1 -H "authorization: Bearer <토큰>" \
+>   -H "x-peers-session: $(uuidgen | tr 'A-Z' 'a-z')" \
+>   -H "Connection: Upgrade" -H "Upgrade: websocket" \
+>   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+>   https://peers.soldoc.co.kr/stream
+> ```
+>
+> `101`이면 정상, `401`이면 토큰 문제, `400`이면 세션 ID가 UUID가 아닙니다. 다만 curl은 TLS 신뢰 저장소가 파이썬과 달라서 **인증서 문제는 이 방법으로 못 잡습니다.** 그 판정은 `doctor.py`로 하세요.
 
 ### 동료 목록이 비어 있거나 "설정이 비어 있습니다"가 떠요
 
