@@ -11,6 +11,7 @@ set -euo pipefail
 APP_DIR=${APP_DIR:-/opt/claude-peers}
 DATA_DIR=${DATA_DIR:-/var/lib/claude-peers}
 SVC_USER=${SVC_USER:-peers}
+VENV_DIR="$DATA_DIR/venv"
 
 [[ $EUID -eq 0 ]] || { echo "root 로 실행하세요 (sudo)"; exit 1; }
 [[ -f "$APP_DIR/broker/server.py" ]] || {
@@ -30,12 +31,21 @@ id -u "$SVC_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /
 
 echo "==> 데이터 디렉터리"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 750 "$DATA_DIR"
+install -d -o "$SVC_USER" -g "$SVC_USER" -m 750 "$DATA_DIR/uv-cache"
 
-echo "==> 파이썬 환경"
-cd "$APP_DIR/broker"
-uv venv .venv
-uv pip install --python .venv/bin/python -e .
-chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
+# 코드는 root 소유 읽기 전용으로 둔다. 서비스 계정이 자기가 실행할 코드를
+# 고쳐 쓸 수 있으면 안 된다.
+echo "==> 코드 권한"
+chown -R root:root "$APP_DIR"
+chmod -R go-w "$APP_DIR"
+
+# venv 생성과 의존성 설치를 서비스 계정으로 내린다.
+# root 로 하면 pyproject 의 빌드 백엔드와 PyPI 패키지가 root 권한으로 실행된다.
+echo "==> 파이썬 환경 (서비스 계정 권한으로 빌드)"
+sudo -u "$SVC_USER" env UV_CACHE_DIR="$DATA_DIR/uv-cache" HOME="$DATA_DIR" \
+  uv venv --python 3.12 "$VENV_DIR"
+sudo -u "$SVC_USER" env UV_CACHE_DIR="$DATA_DIR/uv-cache" HOME="$DATA_DIR" \
+  uv pip install --python "$VENV_DIR/bin/python" -r "$APP_DIR/broker/requirements.txt"
 
 echo "==> systemd 유닛"
 install -m 644 "$APP_DIR/deploy/claude-peers.service" /etc/systemd/system/claude-peers.service
@@ -59,7 +69,7 @@ cat <<EOF
 
   1. 토큰 발급 (사람마다 하나씩)
        sudo -u $SVC_USER PEERS_TOKENS=$DATA_DIR/tokens.json \\
-         $APP_DIR/broker/.venv/bin/python $APP_DIR/broker/issue_token.py <사번이나 계정ID>
+         $VENV_DIR/bin/python $APP_DIR/broker/issue_token.py <사번이나 계정ID>
 
   2. 리버스 프록시
        deploy/nginx-claude-peers.conf 를 참고해 도메인과 인증서를 채운다.

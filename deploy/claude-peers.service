@@ -7,7 +7,7 @@ Type=simple
 User=peers
 Group=peers
 WorkingDirectory=/opt/claude-peers/broker
-ExecStart=/opt/claude-peers/broker/.venv/bin/python server.py
+ExecStart=/var/lib/claude-peers/venv/bin/python server.py
 Restart=always
 RestartSec=5
 
