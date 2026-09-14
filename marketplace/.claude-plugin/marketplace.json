@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "acme-internal",
+  "description": "사내 Claude Code 플러그인 마켓플레이스",
+  "owner": {
+    "name": "Platform Team",
+    "email": "platform@acme.example"
+  },
+  "plugins": [
+    {
+      "name": "peers",
+      "source": "./plugins/peers",
+      "description": "동료 Claude Code 세션 간 질문/답변 채널"
+    }
+  ]
+}

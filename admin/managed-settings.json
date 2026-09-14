@@ -1,0 +1,26 @@
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    { "marketplace": "acme-internal", "plugin": "peers" }
+  ],
+  "extraKnownMarketplaces": {
+    "acme-internal": {
+      "source": { "source": "github", "repo": "acme/claude-plugins" }
+    }
+  },
+  "enabledPlugins": {
+    "peers@acme-internal": true
+  },
+  "pluginConfigs": {
+    "peers@acme-internal": {
+      "options": { "broker_url": "https://peers.acme.internal" }
+    }
+  },
+  "permissions": {
+    "allow": [
+      "mcp__plugin_peers_peers__list_peers",
+      "mcp__plugin_peers_peers__check_inbox",
+      "mcp__plugin_peers_peers__set_status"
+    ]
+  }
+}

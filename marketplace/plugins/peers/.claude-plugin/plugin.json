@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "peers",
+  "displayName": "Claude Peers",
+  "version": "0.1.0",
+  "description": "사내 동료 개발자의 Claude Code 세션에 질문을 푸쉬하고 답을 받는 채널",
+  "author": {
+    "name": "Platform Team",
+    "email": "platform@acme.example"
+  },
+  "userConfig": {
+    "broker_url": {
+      "type": "string",
+      "title": "Broker URL",
+      "description": "사내 peers 브로커 주소 (예: https://peers.acme.internal)",
+      "required": true
+    },
+    "token": {
+      "type": "string",
+      "title": "Peers token",
+      "description": "플랫폼팀에서 발급받은 개인 토큰 (pk_로 시작)",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "peers": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        "${CLAUDE_PLUGIN_ROOT}/server.py"
+      ],
+      "env": {
+        "PEERS_BROKER_URL": "${user_config.broker_url}",
+        "PEERS_TOKEN": "${user_config.token}",
+        "PEERS_LISTEN": "${PEERS_LISTEN:-0}"
+      }
+    }
+  },
+  "channels": [
+    {
+      "server": "peers"
+    }
+  ]
+}

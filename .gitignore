@@ -1,0 +1,21 @@
+# 비밀정보 — 절대 커밋하지 않는다
+tokens.json
+peers.db
+peers.db-wal
+peers.db-shm
+peers.db*
+
+# 파이썬
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Node (구현 이전 잔재)
+node_modules/
+
+# 로컬 도구 상태
+.remember/
+
+# OS
+.DS_Store

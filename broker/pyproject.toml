@@ -1,0 +1,15 @@
+[project]
+name = "claude-peers-broker"
+version = "0.1.0"
+description = "Claude Peers 브로커 — 토큰 인증, presence, 질문/답변 라우팅"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.9"]
+
+# E2E 테스트는 채널 서버를 직접 띄우므로 채널 서버의 의존성도 필요하다.
+# uv를 쓰면 채널 서버가 PEP 723 인라인 선언으로 알아서 해결하지만,
+# 테스트에서는 같은 인터프리터로 띄우므로 여기에도 적어 둔다.
+[project.optional-dependencies]
+test = ["mcp>=2.0", "websockets>=13", "httpx>=0.27"]
+
+[tool.uv]
+package = false
