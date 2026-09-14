@@ -50,6 +50,16 @@ WORKSPACE = re.sub(
 )[:64]
 SID = str(uuid.uuid4())
 
+# 토큰과 질문/답변 본문이 이 주소로 나간다. 루프백이 아닌 평문 연결은 그대로 노출된다.
+if BROKER and BROKER.startswith("http://"):
+    _host = BROKER[len("http://"):].split("/")[0].split(":")[0]
+    if _host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"[peers] 경고: {BROKER} 는 평문(http)입니다. 개인 토큰과 질문/답변 본문이 "
+            "암호화 없이 전송됩니다. 운영에서는 https 를 쓰세요.",
+            file=sys.stderr, flush=True,
+        )
+
 INSTRUCTIONS = f"""
 peers 채널: 사내 동료 개발자의 Claude Code 세션과 질문/답변을 주고받는다. 이 세션의 workspace 이름은 "{WORKSPACE}"이고, 질문 수신은 {'켜져 있다' if LISTEN else '꺼져 있다'}.
 

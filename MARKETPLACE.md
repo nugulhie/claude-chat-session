@@ -172,17 +172,22 @@ managed settings로 배포하면 개발자가 `marketplace add`를 칠 필요도
 {
   "extraKnownMarketplaces": {
     "claude-peers": {
-      "source": { "source": "github", "repo": "nugulhie/claude-chat-session" }
+      "source": { "source": "github", "repo": "<your-org>/<your-fork>" }
     }
   },
   "enabledPlugins": { "peers@claude-peers": true },
   "pluginConfigs": {
-    "peers@claude-peers": { "options": { "broker_url": "https://peers.example.com" } }
+    "peers@claude-peers": { "options": { "broker_url": "https://peers.<your-org>.internal" } }
   }
 }
 ```
 
 `broker_url`처럼 모두에게 같은 값은 미리 채워 두고, 토큰만 개인이 입력하게 하면 됩니다.
+
+**이 두 값은 반드시 조직이 통제하는 것으로 바꾸세요.** managed settings는 조직 전체에 적용되는 정책이라 무게가 다릅니다.
+
+- `extraKnownMarketplaces` + `enabledPlugins`를 함께 쓰면 **모든 개발자 머신이 그 저장소의 기본 브랜치 코드를 자동으로 실행합니다.** 남의 저장소를 그대로 가리키면 그쪽이 바뀔 때마다 사내 전 머신에 반영됩니다. 포크해서 조직 저장소를 가리키고, 검토한 뒤 반영하세요.
+- `broker_url`은 **모든 개발자의 토큰과 질문·답변 본문이 도착할 주소**입니다. 조직이 운영하는 브로커의 `https` 주소여야 합니다.
 
 ## 문제 해결
 

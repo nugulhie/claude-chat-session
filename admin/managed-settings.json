@@ -10,7 +10,7 @@
     "claude-peers": {
       "source": {
         "source": "github",
-        "repo": "nugulhie/claude-chat-session"
+        "repo": "<your-org>/<your-fork-of-claude-chat-session>"
       }
     }
   },
@@ -20,7 +20,7 @@
   "pluginConfigs": {
     "peers@claude-peers": {
       "options": {
-        "broker_url": "https://peers.example.com"
+        "broker_url": "https://peers.<your-org>.internal"
       }
     }
   },

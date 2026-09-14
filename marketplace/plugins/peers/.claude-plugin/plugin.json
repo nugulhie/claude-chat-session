@@ -12,7 +12,7 @@
     "broker_url": {
       "type": "string",
       "title": "Broker URL",
-      "description": "peers 브로커 주소 (예: https://peers.example.com 또는 http://192.168.0.10:8081)",
+      "description": "peers 브로커 주소. https 를 쓰세요 (예: https://peers.example.com). http 로 두면 개인 토큰과 질문/답변 본문이 평문으로 전송됩니다 — 로컬 시험용으로만 쓰세요.",
       "required": true
     },
     "token": {
