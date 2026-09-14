@@ -139,11 +139,13 @@ alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --al
 | 상황 | 동작 |
 |---|---|
 | 수신 OFF 세션에 질문 | 404, 질문 가능한 대상 목록 반환 |
+| 다른 방 세션에 질문 | 404, 같은 방의 질문 가능한 대상 목록 반환 |
 | `to`가 user만 있고 수신 세션이 여러 레포 | 409, `user@workspace` 후보 반환 |
 | 받은 질문을 처리하다 다시 질문 | hops 자동 증가, `MAX_HOPS` 초과 시 422 |
 | 나에게 질문한 세션에 되묻기 | 422, `reply`로 확인 요청하라고 안내 |
 | TTL 안에 답 없음 | 질문 만료, 질문자 세션에 `kind="notice"` 푸쉬, 이후 reply는 410 |
 | 질문자 세션이 재시작됨 | 같은 `user@workspace`로 재접속하면 쌓인 답변 재전달 |
+| 방을 옮긴 뒤 이전 질문에 답 | 허용. 답변은 질문이 있던 방에 묶인다 |
 | 푸쉬를 놓침 | `check_inbox`로 미확인 답변 조회 |
 
 ## 5. 알려진 한계와 주의점
@@ -156,7 +158,7 @@ alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --al
 - `MCP_PROTOCOL_NEGOTIATION=auto`를 설정하지 마세요. 새 프로토콜 리비전으로 협상하면 채널로 등록되지 않습니다.
 - MCP 서버가 뜨는데 "설정이 비어 있습니다" 오류가 나면, `plugin.json`의 `${user_config.*}` 치환이 동작하지 않는 환경일 수 있습니다. 이 경우 env를 `"PEERS_TOKEN": "${PEERS_TOKEN:-}"` 형태로 바꾸고 셸 환경변수로 전달하세요.
 
-채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#5-안-될-때)에 있습니다.
+채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#6-안-될-때)에 있습니다.
 
 ## 라이선스
 

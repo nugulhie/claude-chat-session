@@ -195,7 +195,7 @@ managed settings로 배포하면 개발자가 `marketplace add`를 칠 필요도
 |---|---|
 | `Marketplace file not found` | 매니페스트가 저장소 루트에 없습니다. `.claude-plugin/marketplace.json`을 루트로 옮기세요 |
 | 클론 단계에서 실패 | 비공개 저장소인데 git 접근 권한이 없습니다 |
-| 설치는 됐는데 `CONNECTION_CLOSED` | 플러그인 런타임 문제입니다. [USAGE.md의 진단 순서](USAGE.md#5-안-될-때)를 따르세요 |
+| 설치는 됐는데 `CONNECTION_CLOSED` | 플러그인 런타임 문제입니다. [USAGE.md의 진단 순서](USAGE.md#6-안-될-때)를 따르세요 |
 | 고쳤는데 반영이 안 됨 | `plugin.json`의 `version`을 올렸는지 확인하고, `marketplace update` → `plugin update` 순서로 갱신하세요 |
 | `plugin details`에 `MCP servers (0)` | 표시상의 한계입니다. 인라인 `mcpServers` 선언을 인벤토리가 세지 않을 뿐, 실제로는 동작합니다 |
 

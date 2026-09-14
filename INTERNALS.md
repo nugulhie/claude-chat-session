@@ -89,6 +89,7 @@ WebSocket은 30초마다 브로커가 ping을 보내 살아 있는지 확인합�
 | presence (접속 세션 목록) | **메모리** (`dict[sid, Session]`) | 전부 사라짐 |
 | rate limit 카운터 | **메모리** (`dict[key, list[timestamp]]`) | 0부터 다시 |
 | 작업 요약 / listening 여부 | **메모리** (세션 객체) | 사라짐 |
+| 방 목록 (`rooms`) | **메모리** (`dict[str, Room]`) | 사라짐, 세션이 재접속하며 복원 (아무도 없이 예약만 걸린 방은 유실) |
 | 모든 메시지와 상태 | **디스크** (`messages` 테이블) | 그대로 남음 |
 | 토큰 해시 | **디스크** (`tokens.json`) | 그대로 남음 |
 
@@ -148,7 +149,7 @@ sequenceDiagram
 
     A->>CSA: ask_peer(to, question, context)
     CSA->>BK: POST /api/ask
-    Note over BK: 1. 대상 찾기 (listening=true, 내 sid 아님)<br/>2. hops = 열린 질문의 max+1<br/>3. 핑퐁 검사<br/>4. rate limit<br/>5. messages에 INSERT (queued)
+    Note over BK: 1. 대상 찾기 (listening=true, 내 sid 아님, 같은 방)<br/>2. hops = 열린 질문의 max+1<br/>3. 핑퐁 검사<br/>4. rate limit<br/>5. messages에 INSERT (queued, room=보내는 쪽 방)
     BK-->>CSA: msg_id, to, expires_in_sec
     CSA-->>A: 즉시 반환 — 기다리지 않음
 
