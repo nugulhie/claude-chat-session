@@ -1,122 +1,236 @@
 # Claude Peers
 
-서로 다른 머신에서 돌아가는 Claude Code 세션끼리 질문을 **푸쉬**하고 답을 받는 시스템입니다. Claude Code의 Channels(리서치 프리뷰) 기능을 사용합니다.
+서로 다른 머신에서 돌아가는 Claude Code 세션끼리 질문을 **푸쉬**하고 답을 받는 시스템입니다.
+
+내 레포는 내가 잘 알고, 옆 팀 레포는 그쪽이 잘 압니다. 그 간극을 사람을 거치지 않고 메웁니다. "billing-api 쪽 재시도 정책이 어디 정의돼 있어?"라고 물으면, 그 레포에 띄워 둔 동료의 Claude가 코드를 직접 읽고 `파일:라인`까지 붙여 답합니다.
+
+Claude Code의 Channels(리서치 프리뷰)를 사용합니다.
 
 ```
-                 ┌──────────────────────────────────────┐
-                 │  broker                              │
-                 │  토큰 인증 · presence · 라우팅          │
-                 │  SQLite 저장/감사로그 · 만료 · hop 제한  │
-                 └───────┬──────────────────────┬───────┘
-              WSS (outbound)                WSS (outbound)
-                         │                      │
-             peers 채널 서버 (alice PC)    peers 채널 서버 (bob PC)
-                  stdio  │                      │  stdio
-              Claude Code (payments-web)   Claude Code (billing-api, 수신 ON)
+ 개발자 머신 (N대)                          서버 (1대)
+┌──────────────────────────┐
+│ Claude Code 세션          │
+│   └─ stdio ─┐            │              ┌──────────────────┐
+│             ▼            │              │  리버스 프록시     │
+│   peers 채널 서버 ────────┼── wss ──────▶│  nginx / ALB     │
+│   (uv+python, 세션당 1개) │   outbound   │  :443            │
+└──────────────────────────┘              └────────┬─────────┘
+                                                   │ http (loopback)
+┌──────────────────────────┐                       ▼
+│ Claude Code 세션          │              ┌──────────────────┐
+│   └─ stdio ─┐            │              │  broker          │
+│             ▼            │              │  python, 단일     │
+│   peers 채널 서버 ────────┼── wss ──────▶│  :8080           │
+└──────────────────────────┘   outbound   └────────┬─────────┘
+                                                   │
+                                          ┌────────▼─────────┐
+                                          │ peers.db (SQLite)│
+                                          │ tokens.json      │
+                                          └──────────────────┘
 ```
 
-alice의 Claude가 `ask_peer`를 호출하면, 브로커가 bob의 채널 서버로 전달합니다. 채널 서버는 이를 `notifications/claude/channel`로 bob의 세션에 밀어 넣습니다. bob의 Claude는 조사한 뒤 `reply`를 호출하고, 답은 같은 경로로 alice의 세션에 푸쉬됩니다.
+alice의 Claude가 `ask_peer`를 호출하면 브로커가 bob의 채널 서버로 전달하고, 채널 서버가 `notifications/claude/channel`로 bob의 세션에 밀어 넣습니다. bob의 Claude가 조사한 뒤 `reply`를 호출하면 답이 같은 경로로 돌아옵니다.
 
-## 구성
+**개발자 머신에는 인바운드 포트가 필요 없습니다.** 양쪽 모두 브로커로 나가는 연결만 맺습니다. 노트북이 NAT 뒤에 있어도, VPN을 오가도 상관없습니다.
 
-```
-claude-peers/
-├── broker/                      서버에 배포
-│   ├── server.py                HTTP API + WebSocket 브로커
-│   ├── issue_token.py           토큰 발급/폐기
-│   ├── pyproject.toml           의존성 (aiohttp)
-│   └── tests/e2e.py             E2E 테스트 (채널 서버를 가짜 Claude Code로 구동, 16개 시나리오)
-├── marketplace/                 git 저장소로 push → 플러그인 마켓플레이스
-│   ├── .claude-plugin/marketplace.json
-│   └── plugins/peers/
-│       ├── .claude-plugin/plugin.json   userConfig, mcpServers, channels 선언
-│       ├── server.py                    채널 MCP 서버 (PEP 723 인라인 의존성)
-│       └── skills/peer-collab/SKILL.md  협업 프로토콜 스킬
-├── admin/managed-settings.json  조직 관리 설정 예시
-├── USAGE.md                     개발자용 사용법
-├── ARCHITECTURE.md              설계·연동 방식·개발 방법
-├── INTERNALS.md                 인프라 구조·동작 구조
-├── MARKETPLACE.md               플러그인 배포와 설치
-└── OPERATIONS.md                브로커 운영
-```
+---
 
-역할 분담은 이렇습니다. 브로커는 전달 보장, 정책, 보안을 맡습니다. 채널 서버는 푸쉬와 도구를 제공하는 얇은 어댑터입니다. 스킬은 "언제, 어떻게 묻고 답할지"를 Claude에게 가르칩니다.
+## 목차
 
-## 문서
+1. [무엇이 필요한가](#1-무엇이-필요한가)
+2. [인프라 세우기 — 브로커 배포](#2-인프라-세우기--브로커-배포)
+3. [배포하기 — 플러그인을 팀에 전달](#3-배포하기--플러그인을-팀에-전달)
+4. [설치하기 — 개발자 쪽](#4-설치하기--개발자-쪽)
+5. [사용하기](#5-사용하기)
+6. [방으로 대화 묶기](#6-방으로-대화-묶기)
+7. [로컬에서 먼저 돌려보기](#7-로컬에서-먼저-돌려보기)
+8. [브로커 정책 요약](#8-브로커-정책-요약)
+9. [알려진 한계와 주의점](#9-알려진-한계와-주의점)
+
+더 깊은 내용은 문서를 따로 두었습니다.
 
 | 문서 | 대상 | 내용 |
 |---|---|---|
 | [USAGE.md](USAGE.md) | 사용하는 개발자 | 세션 운영, 질문/답변 요령, 안 될 때 진단 |
+| [MARKETPLACE.md](MARKETPLACE.md) | 배포하는 사람 | 저장소 레이아웃, 배포, 설치, 갱신 |
+| [OPERATIONS.md](OPERATIONS.md) | 브로커 운영자 | 배포, 토큰, 백업, 모니터링, 보관 정책, 장애 대응 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 기여자 | 설계 결정, Claude Code 연동 방식, 개발·검증 방법 |
 | [INTERNALS.md](INTERNALS.md) | 기여자 | 인프라 토폴로지, 메시지 흐름, 상태 머신, 실패 경로 |
-| [MARKETPLACE.md](MARKETPLACE.md) | 배포하는 사람 | 저장소 레이아웃, 배포, 설치, 갱신, 조직 배포 |
-| [OPERATIONS.md](OPERATIONS.md) | 브로커 운영자 | 배포, 토큰, 백업, 모니터링, 보관 정책, 장애 대응 |
 
-## 1. 로컬에서 먼저 돌려보기
+---
 
-요구사항: 파이썬 3.11 이상. 채널 서버는 [uv](https://docs.astral.sh/uv/)가 필요합니다.
+## 1. 무엇이 필요한가
 
-> **채널 서버는 `uv run --script`로 뜹니다.** 스크립트 첫머리의 PEP 723 인라인 메타데이터에 의존성이 선언돼 있어 uv가 알아서 받아 캐시합니다. 개발자가 venv를 만들 필요가 없고, 플러그인 설치 경로에서 의존성이 빠지는 사고가 구조적으로 생기지 않습니다. 대신 Claude Code를 실행하는 셸의 PATH에 `uv`가 있어야 합니다 — `uv --version`으로 확인하세요.
+**서버 1대.** 브로커가 돌 곳입니다. 외부 의존성이 `aiohttp` 하나뿐인 단일 파이썬 프로세스이고 데이터베이스는 SQLite 파일 하나입니다. 별도 인프라가 없습니다.
+
+- 파이썬 3.11 이상
+- TLS와 WebSocket upgrade를 지원하는 리버스 프록시 (nginx, ALB 등)
+- 디스크는 수 GB면 충분합니다
+
+**개발자 머신마다.**
+
+- Claude Code
+- [uv](https://docs.astral.sh/uv/) — 채널 서버가 `uv run --script`로 뜨고 의존성을 알아서 해결합니다
+
+**git 저장소 1개.** 플러그인을 배포할 곳입니다. 공개든 비공개든 상관없습니다.
+
+---
+
+## 2. 인프라 세우기 — 브로커 배포
+
+### 2.1 서버에 올리기
 
 ```bash
-# 브로커
-cd broker
-uv venv && uv pip install -e ".[test]"
-.venv/bin/python issue_token.py alice   # 출력된 pk_... 토큰 보관
-.venv/bin/python issue_token.py bob
-.venv/bin/python server.py              # :8080
-
-# 자동 테스트 (다른 터미널)
-cd broker && .venv/bin/python tests/e2e.py
+git clone <이 저장소> /opt/claude-peers
+cd /opt/claude-peers/broker
+uv venv && uv pip install -e .
 ```
 
-실제 Claude Code 두 세션으로 시험하려면 플러그인을 설치합니다. 커스텀 채널은 조직 허용 목록에 넣기 전까지 개발용 플래그로만 켤 수 있습니다.
+### 2.2 토큰 발급
 
-자세한 배포·설치 방법은 [MARKETPLACE.md](MARKETPLACE.md)에 있습니다.
+사용자마다 하나씩 발급합니다. 원본은 한 번만 출력되고 서버에는 SHA-256 해시만 남습니다.
 
 ```bash
-# git 저장소에서 바로 (동료에게 안내할 방법)
-claude plugin marketplace add nugulhie/claude-chat-session
+PEERS_TOKENS=/var/lib/claude-peers/tokens.json .venv/bin/python issue_token.py alice
+# pk_... 출력 — 이때 받아서 본인에게 전달
+```
 
-# 또는 이 저장소를 클론해 뒀다면 로컬 경로로
-claude plugin marketplace add .
+**사람마다 다른 토큰을 주세요.** 누가 무엇을 물었는지 사용자 단위로 기록되고, 문제가 생기면 그 사람 것만 폐기할 수 있습니다.
+
+```bash
+.venv/bin/python issue_token.py --revoke alice   # 재시작 불필요, 몇 초 내 반영
+```
+
+운영에서는 `server.py`의 `authenticate()`를 사내 SSO/OIDC 검증으로 교체하는 것을 권합니다. 함수 하나만 바꾸면 되도록 격리해 뒀습니다.
+
+### 2.3 상시 가동
+
+```ini
+# /etc/systemd/system/claude-peers.service
+[Unit]
+Description=Claude Peers broker
+After=network.target
+
+[Service]
+Type=simple
+User=peers
+WorkingDirectory=/opt/claude-peers/broker
+ExecStart=/opt/claude-peers/broker/.venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+Environment=PORT=8080
+Environment=HOST=127.0.0.1
+Environment=PEERS_DB=/var/lib/claude-peers/peers.db
+Environment=PEERS_TOKENS=/var/lib/claude-peers/tokens.json
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`HOST=127.0.0.1`로 묶고 프록시만 외부에 노출하세요. 브로커 자체는 TLS를 하지 않습니다.
+
+### 2.4 리버스 프록시
+
+`https://`로 노출합니다. 채널 서버가 URL의 `http`를 `ws`로 바꿔 `/stream`에 연결하므로 `https` → `wss`가 됩니다. **WebSocket upgrade가 통과해야 합니다.**
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+
+    # 세션이 오래 붙어 있다. 브로커가 30초마다 ping 을 보내지만
+    # 프록시가 먼저 끊으면 소용없다.
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
+ALB를 쓴다면 idle timeout을 기본값(60초)에서 늘리세요.
+
+### 2.5 확인
+
+```bash
+curl -s https://peers.example.com/healthz
+# {"ok": true, "sessions": 0, "rooms": 1}
+```
+
+### 2.6 반드시 알아야 할 두 가지
+
+**단일 인스턴스입니다.** presence와 rate limit이 메모리에 있습니다. 두 대 이상 띄우면 서로 다른 인스턴스에 붙은 세션끼리 보이지 않습니다. 로드밸런서 뒤에 한 대만 두세요.
+
+**백업은 `peers.db`만 복사하면 안 됩니다.** WAL 모드라 최근 데이터가 `peers.db-wal`에 있습니다. 실제로 확인해 보면 돌아가던 브로커의 `peers.db`만 복사한 파일은 테이블조차 없습니다.
+
+```bash
+sqlite3 /var/lib/claude-peers/peers.db ".backup '/backup/peers-$(date +%F).db'"
+```
+
+환경변수 전체, 모니터링, 보관 정책, 장애 대응은 [OPERATIONS.md](OPERATIONS.md)에 있습니다.
+
+---
+
+## 3. 배포하기 — 플러그인을 팀에 전달
+
+이 저장소를 git에 push하면 그대로 마켓플레이스가 됩니다. 빌드도 업로드도 없습니다.
+
+**매니페스트가 저장소 루트의 `.claude-plugin/marketplace.json`에 있어야 합니다.** 하위 폴더에 두면 git으로 받을 때 실패합니다. 로컬 경로로는 동작하므로, 로컬에서 되던 게 git으로 바꾸는 순간 깨지는 함정이 있습니다.
+
+플러그인을 고칠 때마다 `plugin.json`의 `version`을 올리세요. 버전이 캐시 디렉터리 이름이라 올리지 않으면 새 코드가 내려가지 않습니다.
+
+조직 전체에 미리 깔아 두려면 [admin/managed-settings.json](admin/managed-settings.json)을 참고하세요. `broker_url`을 미리 채워 두면 개발자는 토큰만 입력하면 됩니다. 다만 **managed settings는 조직 전체 정책이라** 저장소와 브로커 주소를 반드시 조직이 통제하는 것으로 바꿔야 합니다 — 모든 개발자 머신이 그 저장소 코드를 자동 실행하고, 모든 토큰이 그 주소로 갑니다.
+
+자세한 내용은 [MARKETPLACE.md](MARKETPLACE.md)에 있습니다.
+
+---
+
+## 4. 설치하기 — 개발자 쪽
+
+**1) 브로커에 닿는지 먼저 확인합니다.** 이게 안 되면 아래는 볼 필요 없습니다.
+
+```bash
+curl -s https://peers.example.com/healthz
+```
+
+**2) uv를 설치합니다.** 이미 있으면 건너뜁니다 (`uv --version`).
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**3) 플러그인을 설치합니다.**
+
+```bash
+claude plugin marketplace add <owner>/<repo>
 claude plugin install peers@claude-peers \
-  --config broker_url=http://127.0.0.1:8080 --config token=<alice 토큰>
-
-# 터미널 A: 질문하는 세션
-cd ~/work/payments-web
-claude --dangerously-load-development-channels plugin:peers@claude-peers
-
-# 터미널 B: 질문 받는 세션 (bob 토큰으로 설치한 환경, 또는 다른 계정/머신)
-cd ~/work/billing-api
-PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:peers@claude-peers
+  --config broker_url=https://peers.example.com \
+  --config token=<발급받은 개인 토큰>
 ```
 
-A 세션에서 "billing-api 쪽 Claude한테 취소 웹훅 재시도 정책이 어디 정의돼 있는지 물어봐"라고 요청하면 흐름을 확인할 수 있습니다.
+**4) 붙었는지 확인합니다.**
 
-## 2. 배포와 운영
+```bash
+claude mcp list | grep peers
+# plugin:peers:peers: uv run --script ... - ✔ Connected
+```
 
-브로커는 외부 의존성이 `aiohttp` 하나뿐인 단일 파이썬 프로세스이고, 데이터베이스는 SQLite 파일 하나입니다. TLS와 WebSocket upgrade를 지원하는 리버스 프록시 뒤에 두고 `https://`로 노출하세요.
+토큰은 `sensitive`로 선언돼 있어 `settings.json`이 아니라 보안 저장소로 갑니다. 설정 파일을 열어봐도 안 보이는 것이 정상입니다.
 
-**presence와 rate limit이 메모리에 있으므로 단일 인스턴스 기준입니다.**
+---
 
-배포 절차, 환경변수, 토큰 운영, 백업(WAL 주의), 모니터링, 보관 정책, 장애 대응, 조직 설정 배포는 [OPERATIONS.md](OPERATIONS.md)에 있습니다.
+## 5. 사용하기
 
-## 3. 개발자 사용법
+세션을 두 종류로 나눠 쓰는 것이 핵심입니다.
 
-개발자에게 전달할 문서는 [USAGE.md](USAGE.md)입니다. 질문/답변 작성 요령, 안 될 때 진단 순서, 거부 응답별 대처가 정리돼 있습니다. 아래는 요약입니다.
-
-설치는 `/plugin install peers@claude-peers`로 합니다. 설치할 때 개인 토큰을 입력합니다.
-
-세션은 두 종류로 나눠 쓰는 것을 권장합니다.
-
-**작업 세션 (질문만 함)**: 평소 작업하는 세션입니다. 답이 푸쉬로 들어오도록 채널은 켭니다.
+**작업 세션** — 평소 코딩하는 세션입니다. 질문을 보내고 답을 받지만 남의 질문은 받지 않습니다.
 
 ```bash
 claude --channels plugin:peers@claude-peers
 ```
 
-**응답 전용 세션 (질문 받음)**: 레포마다 하나씩 백그라운드 터미널에 띄워 둡니다. 작업 세션의 컨텍스트가 남의 질문으로 오염되지 않고, 읽기 전용으로 제한할 수 있습니다.
+**응답 전용 세션** — 담당 레포마다 하나씩 백그라운드 터미널에 띄워 둡니다. 남의 질문은 여기로만 들어옵니다.
 
 ```bash
 cd ~/work/billing-api
@@ -125,16 +239,87 @@ PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"
 ```
 
-`reply`를 허용해 두지 않으면, 답장할 때마다 권한 프롬프트가 떠서 사람이 승인할 때까지 세션이 멈춥니다. 반대로 `ask_peer`는 자동 허용하지 않는 것을 권장합니다. 내 코드 컨텍스트가 밖으로 나가는 순간이므로 사람이 한 번 보고 승인하는 편이 안전합니다.
+나누는 이유는 두 가지입니다. 작업 세션의 컨텍스트가 남의 질문으로 오염되지 않고, 응답 세션을 읽기 전용으로 묶어 둘 수 있습니다. **질문 본문은 결국 다른 사람의 Claude가 쓴 텍스트이므로, 도구 제한이 가장 확실한 방어입니다.**
 
-셸 alias 예시:
+`reply`를 미리 허용하지 않으면 답할 때마다 권한 프롬프트가 떠서 세션이 멈춥니다. 반대로 `ask_peer`는 자동 허용하지 마세요 — 내 코드 컨텍스트가 밖으로 나가는 순간이라 한 번 보고 승인하는 편이 안전합니다.
 
-```bash
-alias cc='claude --channels plugin:peers@claude-peers'
-alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --allowedTools "mcp__plugin_peers_peers__reply" --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"'
+질문은 평소처럼 말하면 됩니다.
+
+```
+billing-api 쪽 Claude한테 취소 웹훅 재시도 정책이 어디 정의돼 있는지 물어봐
 ```
 
-## 4. 브로커 정책 요약
+**보낸 뒤 기다리지 않습니다.** 답은 나중에 푸쉬로 도착하므로 Claude는 다른 작업을 계속합니다.
+
+> 조직 managed settings에 `allowedChannelPlugins`가 아직 없으면 `--channels` 대신 `--dangerously-load-development-channels`를 씁니다.
+
+질문·답변 작성 요령과 안 될 때 진단 순서는 [USAGE.md](USAGE.md)에 있습니다.
+
+---
+
+## 6. 방으로 대화 묶기
+
+사람이 늘면 전원이 서로 보이는 게 번잡해지고, 한 주제로 오간 대화가 다른 대화와 섞입니다. 방은 이를 묶는 수단입니다.
+
+세션이 뜰 때 방을 정합니다.
+
+```bash
+PEERS_ROOM=webhook-dup PEERS_ROOM_SUBJECT="취소 웹훅 중복 수신 조사" \
+  PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers
+```
+
+같은 방 세션끼리만 `list_peers`에 보이고 질문할 수 있습니다. **방을 지정하지 않으면 `public`이고, 방이 없던 때와 똑같이 동작합니다** — 기존 사용자는 아무것도 바꿀 필요가 없습니다.
+
+Claude에게 방을 만들게 할 수도 있습니다.
+
+```
+minji랑 웹훅 건으로 따로 방 파자
+→ create_room 이 이름을 돌려줍니다. 그 이름을 상대에게 전달하면 됩니다.
+```
+
+`list_rooms`로 열려 있는 방을 보고, `join_room`으로 옮깁니다. 1:1은 둘만 아는 이름을 쓰면 됩니다.
+
+> **방은 대화를 묶는 수단이지 접근 통제가 아닙니다.** 이름을 아는 사람은 누구나 들어올 수 있고, 방 이름과 주제는 `list_rooms`로 전원에게 보입니다. 민감한 내용을 방으로 가릴 수 있다고 생각하면 안 됩니다.
+
+---
+
+## 7. 로컬에서 먼저 돌려보기
+
+```bash
+# 브로커
+cd broker
+uv venv && uv pip install -e ".[test]"
+.venv/bin/python issue_token.py alice   # pk_... 보관
+.venv/bin/python issue_token.py bob
+.venv/bin/python server.py              # :8080
+
+# 자동 테스트 (다른 터미널)
+cd broker && .venv/bin/python tests/e2e.py
+```
+
+E2E는 브로커와 채널 서버를 실제로 띄우고 가짜 Claude Code로 전 경로를 검증합니다. 28개 시나리오가 몇 초 안에 돕니다.
+
+실제 두 세션으로 시험하려면 이 저장소를 로컬 마켓플레이스로 등록합니다.
+
+```bash
+claude plugin marketplace add ./
+claude plugin install peers@claude-peers \
+  --config broker_url=http://127.0.0.1:8080 --config token=<alice 토큰>
+
+# 터미널 A: 질문하는 세션
+cd ~/work/payments-web
+claude --dangerously-load-development-channels plugin:peers@claude-peers
+
+# 터미널 B: 질문 받는 세션
+cd ~/work/billing-api
+PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:peers@claude-peers
+```
+
+로컬 경로로 등록하면 Claude Code가 캐시가 아니라 **원본 `server.py`를 직접 실행**하므로, 고치고 새 세션을 띄우면 바로 반영됩니다.
+
+---
+
+## 8. 브로커 정책 요약
 
 | 상황 | 동작 |
 |---|---|
@@ -143,22 +328,29 @@ alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --al
 | `to`가 user만 있고 수신 세션이 여러 레포 | 409, `user@workspace` 후보 반환 |
 | 받은 질문을 처리하다 다시 질문 | hops 자동 증가, `MAX_HOPS` 초과 시 422 |
 | 나에게 질문한 세션에 되묻기 | 422, `reply`로 확인 요청하라고 안내 |
-| TTL 안에 답 없음 | 질문 만료, 질문자 세션에 `kind="notice"` 푸쉬, 이후 reply는 410 |
-| 질문자 세션이 재시작됨 | 같은 `user@workspace`로 재접속하면 쌓인 답변 재전달 |
+| TTL(기본 15분) 안에 답 없음 | 질문 만료, 질문자에게 `kind="notice"` 푸쉬, 이후 reply는 410 |
 | 방을 옮긴 뒤 이전 질문에 답 | 허용. 답변은 질문이 있던 방에 묶인다 |
+| 질문자 세션이 재시작됨 | 같은 `user@workspace`로 재접속하면 쌓인 답변 재전달 |
 | 푸쉬를 놓침 | `check_inbox`로 미확인 답변 조회 |
+| 질문 폭주 | 10분당 사용자 30건 / 같은 상대 10건 초과 시 429 |
 
-## 5. 알려진 한계와 주의점
+---
+
+## 9. 알려진 한계와 주의점
 
 - **리서치 프리뷰 기능**입니다. `--channels` 플래그와 프로토콜이 바뀔 수 있습니다. 로직은 브로커에 두고 채널 서버는 얇게 유지했습니다.
-- **채널로 등록되지 않은 세션**(`--channels` 없이 실행)에서도 MCP 서버는 뜨고 브로커에 접속합니다. 하지만 푸쉬는 조용히 버려지고, 채널 서버 쪽에서는 이를 알 방법이 없습니다. 그래서 질문 수신은 `PEERS_LISTEN=1`로 명시적으로 켠 세션만 받게 했습니다. 답변을 놓치면 `check_inbox`로 복구합니다.
-- 푸쉬는 **세션이 열려 있을 때만** 도착합니다. Claude가 작업 중이면 이벤트가 쌓였다가 다음 턴에 한꺼번에 처리됩니다.
-- **permission relay(`claude/channel/permission`)는 일부러 선언하지 않았습니다.** 선언하면 채널로 메시지를 보낼 수 있는 사람이 내 세션의 도구 사용을 승인할 수 있게 됩니다. 동료 간 채널에서는 켜면 안 됩니다.
-- 채널 본문은 다른 사람의 Claude가 쓴 텍스트이므로 프롬프트 인젝션 경로가 될 수 있습니다. 서버 instructions와 스킬에 방어 규칙을 넣었지만, 가장 확실한 방어는 응답 전용 세션의 도구 제한입니다.
+- **채널로 등록되지 않은 세션**(`--channels` 없이 실행)에서도 MCP 서버는 뜨고 브로커에 접속하지만 푸쉬는 조용히 버려집니다. 그래서 질문 수신은 `PEERS_LISTEN=1`로 명시적으로 켠 세션만 받게 했습니다.
+- 푸쉬는 **세션이 열려 있을 때만** 도착합니다. Claude가 작업 중이면 이벤트가 쌓였다가 다음 턴에 처리됩니다.
+- **비대화형(`-p`) 모드에서는 답을 기다리다 턴을 소진할 수 있습니다.** 자동화에는 `check_inbox` 폴백이 필요합니다.
+- **permission relay(`claude/channel/permission`)는 일부러 선언하지 않았습니다.** 선언하면 채널로 메시지를 보낼 수 있는 사람이 내 세션의 도구 사용을 승인할 수 있게 됩니다.
+- 채널 본문은 프롬프트 인젝션 경로가 될 수 있습니다. 서버 instructions와 스킬에 방어 규칙을 넣었지만 가장 확실한 방어는 응답 전용 세션의 도구 제한입니다.
+- **방 이름·주제·워크스페이스 이름은 ASCII만 가능합니다.** HTTP 헤더로 전달되기 때문입니다. 한글 방 이름을 주면 `public`으로 떨어지고, 주제는 인코딩되어 값이 보존됩니다.
+- **모든 질문과 답변은 브로커 DB에 남습니다.** 누가 누구에게 무엇을 묻고 답했는지 전부 기록되는 감사 로그입니다.
 - `MCP_PROTOCOL_NEGOTIATION=auto`를 설정하지 마세요. 새 프로토콜 리비전으로 협상하면 채널로 등록되지 않습니다.
-- MCP 서버가 뜨는데 "설정이 비어 있습니다" 오류가 나면, `plugin.json`의 `${user_config.*}` 치환이 동작하지 않는 환경일 수 있습니다. 이 경우 env를 `"PEERS_TOKEN": "${PEERS_TOKEN:-}"` 형태로 바꾸고 셸 환경변수로 전달하세요.
 
 채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#6-안-될-때)에 있습니다.
+
+---
 
 ## 라이선스
 
