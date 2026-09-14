@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -82,6 +83,8 @@ class Peer:
     def __init__(self, user: str, workspace: str, listen: bool, token: str,
                  room: str | None = None, subject: str | None = None):
         self.user = user
+        self.sid = str(uuid.uuid4())
+        self.token = token
         self.events: list[dict] = []
         self._next_id = 0
         self._replies: dict[int, dict] = {}
@@ -93,6 +96,7 @@ class Peer:
                 **os.environ,
                 "PEERS_BROKER_URL": BROKER_URL,
                 "PEERS_TOKEN": token,
+                "PEERS_SID": self.sid,
                 "PEERS_LISTEN": "1" if listen else "0",
                 "PEERS_WORKSPACE": workspace,
                 **({"PEERS_ROOM": room} if room else {}),
@@ -146,6 +150,19 @@ class Peer:
             "claude/channel capability가 선언되지 않았다"
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return res.get("instructions", "")
+
+    def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        req = urllib.request.Request(
+            BROKER_URL + path, method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={"authorization": f"Bearer {self.token}",
+                     "x-peers-session": self.sid,
+                     "content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
 
     def list_tools(self) -> list[str]:
         return sorted(t["name"] for t in self._request("tools/list")["tools"])
@@ -357,6 +374,31 @@ def main() -> int:
         blocked = erin.call("ask_peer", {"to": "bob@room-b", "question": "다른 방"})
         assert "404" in blocked["error"], blocked["error"]
         ok("방이 다르면 list_peers 에 안 보이고 질문도 404")
+
+        # 15. 방 API — 생성/조회/중복
+        def broker_post(tok, sid, path, body):
+            req = urllib.request.Request(BROKER_URL + path, method="POST",
+                             data=json.dumps(body).encode(),
+                             headers={"authorization": f"Bearer {tok}",
+                                      "x-peers-session": sid,
+                                      "content-type": "application/json"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read())
+
+        st, made = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"subject": "웹훅 조사"})
+        assert st == 200, (st, made)
+        assert made["room"].startswith("r-") and len(made["room"]) == 8, made
+        st2, dup = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"name": made["room"]})
+        assert st2 == 409, (st2, dup)
+        st3, res = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"name": "public"})
+        assert st3 == 400, (st3, res)
+        ok("create_room: 이름 생성, 중복 409, public 400")
 
         print(f"\n{passed}개 통과")
         return 0

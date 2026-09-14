@@ -50,7 +50,7 @@ WORKSPACE = re.sub(
 )[:64]
 ROOM = env("PEERS_ROOM") or env("PEERS_DEFAULT_ROOM") or "public"
 ROOM_SUBJECT = (env("PEERS_ROOM_SUBJECT") or "")[:200]
-SID = str(uuid.uuid4())
+SID = env("PEERS_SID") or str(uuid.uuid4())
 
 # 토큰과 질문/답변 본문이 이 주소로 나간다. 루프백이 아닌 평문 연결은 그대로 노출된다.
 if BROKER and BROKER.startswith("http://"):

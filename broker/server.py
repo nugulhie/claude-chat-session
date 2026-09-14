@@ -179,6 +179,7 @@ sessions: dict[str, Session] = {}
 class Room:
     subject: str | None = None
     reserved_until: int | None = None
+    created_by: str | None = None
 
 
 rooms: dict[str, Room] = {DEFAULT_ROOM: Room()}
@@ -442,6 +443,78 @@ def inbox(me: Session) -> dict:
     return {"messages": [wire(r) for r in rows], "open_questions_to_me": [wire(r) for r in open_q]}
 
 
+ROOM_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+
+
+def gen_room_name() -> str:
+    import secrets
+    return "r-" + "".join(secrets.choice(ROOM_ALPHABET) for _ in range(6))
+
+
+def create_room(me: Session, body: dict) -> dict:
+    subject = _str(body.get("subject"), "subject", MAX_SUBJECT, required=False)
+    name = _str(body.get("name"), "name", 64, required=False)
+
+    if name:
+        if name == DEFAULT_ROOM:
+            raise HttpError(400, f"{DEFAULT_ROOM} 은 예약된 방 이름입니다")
+        if not ROOM_RE.match(name):
+            raise HttpError(400, "방 이름은 영문/숫자/. _ - 만 쓸 수 있습니다 (최대 64자)")
+        if name in rooms:
+            raise HttpError(409, f"{name}: 이미 있는 방입니다")
+    else:
+        for _ in range(20):
+            name = gen_room_name()
+            if name not in rooms:
+                break
+        else:
+            raise HttpError(500, "방 이름 생성 실패")
+
+    reserved = sum(
+        1 for n, r in rooms.items()
+        if r.reserved_until and r.reserved_until > now() and room_peers(n) == 0
+        and r.created_by == me.user
+    )
+    if reserved >= MAX_RESERVED_PER_USER:
+        raise HttpError(429, f"비어 있는 예약 방이 너무 많습니다 (최대 {MAX_RESERVED_PER_USER})")
+    if not allow(f"u:{me.user}", LIMIT_PER_USER):
+        raise HttpError(429, "요청 빈도 제한에 걸렸습니다. 잠시 후 다시 시도하세요")
+
+    rooms[name] = Room(subject=subject or None,
+                       reserved_until=now() + ROOM_RESERVE_MS,
+                       created_by=me.user)
+    log(f"room create {name} by {me.user}")
+    return {"room": name, "subject": subject or None,
+            "reserved_for_sec": ROOM_RESERVE_MS // 1000}
+
+
+def join_room(me: Session, body: dict) -> dict:
+    room = _str(body.get("room"), "room", 64).strip()
+    if not ROOM_RE.match(room):
+        raise HttpError(400, "방 이름은 영문/숫자/. _ - 만 쓸 수 있습니다 (최대 64자)")
+    subject = _str(body.get("subject"), "subject", MAX_SUBJECT, required=False)
+
+    old = me.room
+    me.room = room
+    touch_room(room, subject or None)
+    if old != room:
+        drop_empty_rooms()
+        log(f"room join {address_of(me)} {old} -> {room}")
+    return {"room": room, "subject": rooms[room].subject, "peers": room_peers(room)}
+
+
+def list_rooms(me: Session) -> dict:
+    t = now()
+    out = []
+    for name, r in rooms.items():
+        n = room_peers(name)
+        if n == 0 and name != DEFAULT_ROOM and not (r.reserved_until and r.reserved_until > t):
+            continue
+        out.append({"room": name, "subject": r.subject, "peers": n, "you": name == me.room})
+    out.sort(key=lambda x: (not x["you"], -x["peers"], x["room"]))
+    return {"rooms": out}
+
+
 # ─── 라우팅 ──────────────────────────────────────────────────────────────
 def json_response(status: int, body: dict) -> web.Response:
     return web.Response(
@@ -471,7 +544,7 @@ def guarded(handler, *, needs_body: bool):
 
 
 async def healthz(request: web.Request) -> web.Response:
-    return json_response(200, {"ok": True, "sessions": len(sessions)})
+    return json_response(200, {"ok": True, "sessions": len(sessions), "rooms": len(rooms)})
 
 
 # ─── WebSocket: 세션 연결과 푸쉬 ─────────────────────────────────────────
@@ -580,6 +653,7 @@ async def sweeper() -> None:
                 (t, t - INBOX_TTL_MS),
             )
             db.commit()
+            drop_empty_rooms()
         except Exception as e:
             log("sweep error", repr(e))
 
@@ -606,6 +680,9 @@ def make_app() -> web.Application:
             web.post("/api/reply", guarded(reply, needs_body=True)),
             web.post("/api/status", guarded(set_session_status, needs_body=True)),
             web.get("/api/inbox", guarded(inbox, needs_body=False)),
+            web.post("/api/rooms", guarded(create_room, needs_body=True)),
+            web.post("/api/rooms/join", guarded(join_room, needs_body=True)),
+            web.get("/api/rooms", guarded(list_rooms, needs_body=False)),
         ]
     )
     app.on_startup.append(on_startup)
