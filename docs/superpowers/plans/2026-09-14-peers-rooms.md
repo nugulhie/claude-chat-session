@@ -804,24 +804,47 @@ git add -A && git commit -m "문서에 방 반영"
 
 E2E는 프로토콜을 검증하지만 Claude의 판단은 검증하지 않는다. 브로커 로그가 최종 판정 기준이다.
 
+> **먼저 사용자에게 확인한다.** 이 태스크는 플러그인 설정을 바꾸고 브로커를 띄운다.
+> 사용자가 별도로 시험 중인 브로커나 플러그인 설정이 살아 있으면 **실행하지 않는다.**
+> `pgrep -fl "server.py"` 와 `claude plugin list` 로 확인하고, 돌고 있는 것이 있으면
+> 멈추고 물어본다. 절대 `pkill -f server.py` 같은 패턴 종료를 쓰지 않는다 —
+> 남의 프로세스를 죽인다.
+
 **Files:** 없음 (검증만)
 
 **Interfaces:**
 - Consumes: Task 1~6 전부
 - Produces: 없음
 
-- [ ] **Step 1: 브로커를 띄우고 토큰을 발급한다**
+- [ ] **Step 1: 기존 환경을 기록하고 충돌이 없는지 본다**
+
+```bash
+pgrep -fl "server.py" || echo "(돌고 있는 브로커 없음)"
+claude plugin list 2>&1 | grep -A3 peers || echo "(설치된 peers 없음)"
+python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/settings.json'))); print(d.get('pluginConfigs'))"
+```
+
+돌고 있는 브로커나 설치된 `peers` 플러그인이 있으면 **여기서 멈추고 사용자에게 묻는다.**
+없으면 위 출력을 메모해 두고 다음으로 간다.
+
+- [ ] **Step 2: 빈 포트에 브로커를 띄우고 PID 를 저장한다**
 
 ```bash
 cd broker
 for P in 18991 18992 18993; do lsof -i :$P >/dev/null 2>&1 || { PORT=$P; break; }; done
-PEERS_TOKENS=/tmp/rt.json .venv/bin/python issue_token.py alice
+echo "PORT=$PORT"
+PEERS_TOKENS=/tmp/rt.json .venv/bin/python issue_token.py alice   # 토큰 보관
 PORT=$PORT HOST=127.0.0.1 PEERS_DB=/tmp/rt.db PEERS_TOKENS=/tmp/rt.json \
   .venv/bin/python server.py > /tmp/rt.log 2>&1 &
-curl -s http://127.0.0.1:$PORT/healthz   # {"ok":true,"sessions":0,"rooms":1}
+echo $! > /tmp/rt.pid        # 반드시 PID 를 남긴다. 정리는 이 PID 로만 한다
+sleep 2 && curl -s http://127.0.0.1:$PORT/healthz
 ```
 
-- [ ] **Step 2: 로컬 마켓플레이스로 설치한다**
+기대: `{"ok": true, "sessions": 0, "rooms": 1}`
+
+- [ ] **Step 3: 로컬 마켓플레이스로 설치한다**
+
+Step 1에서 `peers` 가 이미 설치돼 있었다면 이 단계를 건너뛰고 사용자에게 묻는다.
 
 ```bash
 claude plugin marketplace add .
@@ -829,11 +852,14 @@ claude plugin install peers@claude-peers --config broker_url=http://127.0.0.1:$P
 claude mcp list | grep peers     # ✔ Connected
 ```
 
-- [ ] **Step 3: 방을 지정해 응답 세션을 띄운다**
+- [ ] **Step 4: 방을 지정해 응답 세션을 띄운다**
 
 ```bash
 mkdir -p /tmp/rt/billing-api/src/webhooks
-# retry.ts 에 MAX_ATTEMPTS=5 등 실제 코드를 둔다
+cat > /tmp/rt/billing-api/src/webhooks/retry.ts <<'TS'
+export const MAX_ATTEMPTS = 5
+export const BASE_DELAY_MS = 60_000
+TS
 cd /tmp/rt/billing-api
 PEERS_ROOM=webhook-dup PEERS_ROOM_SUBJECT="취소 웹훅 중복 수신" PEERS_LISTEN=1 \
   claude --dangerously-load-development-channels plugin:peers@claude-peers \
@@ -841,13 +867,14 @@ PEERS_ROOM=webhook-dup PEERS_ROOM_SUBJECT="취소 웹훅 중복 수신" PEERS_LI
   -p "질문을 기다렸다가 이 레포 코드를 읽고 reply 로 답해라. 추측하지 마라." --max-turns 200 &
 ```
 
-- [ ] **Step 4: 같은 방에서 질문하고, 다른 방에서도 시도한다**
+- [ ] **Step 5: 같은 방과 다른 방에서 각각 질문한다**
 
-같은 방 세션에서 질문 → 답이 오는지 확인한다. 그다음 `PEERS_ROOM` 없이(즉 `public`) 세션을 띄워 같은 대상에게 질문하면 **404가 나야 한다.**
+같은 방(`PEERS_ROOM=webhook-dup`)에서 질문하면 답이 와야 한다.
+`PEERS_ROOM` 없이(즉 `public`) 띄운 세션에서 같은 대상에게 질문하면 **404** 가 나야 한다.
 
-- [ ] **Step 5: 브로커 로그로 판정하고 정리한다**
+- [ ] **Step 6: 브로커 로그로 판정한다**
 
-`/tmp/rt.log` 에 다음이 보여야 한다:
+`/tmp/rt.log` 에 다음이 보여야 한다.
 
 ```
 connect alice@billing-api ... room=webhook-dup
@@ -855,15 +882,18 @@ ask <id> ... -> ... hops=0
 reply <id> for <id>
 ```
 
-확인 후 정리한다.
+- [ ] **Step 7: 시작한 것만 정리한다**
 
 ```bash
+kill "$(cat /tmp/rt.pid)"          # 패턴이 아니라 PID 로만 죽인다
 claude plugin uninstall peers@claude-peers
 claude plugin marketplace remove claude-peers
-pkill -f "broker/server.py"
+rm -f /tmp/rt.pid /tmp/rt.json /tmp/rt.db /tmp/rt.log
 ```
 
-- [ ] **Step 6: 결과를 기록하고 커밋한다**
+Step 1에서 기록한 상태로 돌아왔는지 확인한다. 사용자가 쓰던 설정이 있었다면 복원한다.
+
+- [ ] **Step 8: 결과를 기록하고 커밋한다**
 
 통합 검증 결과를 스펙 문서 하단에 `## 검증 기록` 절로 덧붙이고 커밋한다.
 
