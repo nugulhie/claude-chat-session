@@ -152,7 +152,17 @@ context: payments-web에서 취소 웹훅 중복 수신 버그를 보는 중.
 uv run --script deploy/doctor.py https://peers.soldoc.co.kr <토큰>
 ```
 
-세 단계를 순서대로 봅니다. `[2]`까지 통과하고 `[3]`에서 실패하면 브로커도 토큰도 정상이고, 클라이언트 쪽 문제입니다.
+네 단계를 순서대로 봅니다. `[3] REST`는 통과하는데 `[4] WebSocket`만 실패하면 브로커도 토큰도 정상이고, **클라이언트 쪽 TLS 신뢰 저장소** 문제일 가능성이 큽니다.
+
+`[2] TLS`에서 `OpenSSL 기본`만 실패하고 `certifi`는 통과하면 그게 원인입니다. 플러그인 0.3.0부터는 양쪽 모두 certifi를 쓰도록 고쳐서 이 경우는 저절로 해결됩니다.
+
+**사내 TLS 검사 장비(SSL 인스펙션)를 쓰는 망**이라면 사설 루트 CA가 필요합니다. 경로를 지정하세요.
+
+```bash
+PEERS_CA_BUNDLE=/path/to/corp-root-ca.pem claude
+```
+
+표준 `SSL_CERT_FILE`도 같은 용도로 인식합니다.
 
 stderr 원문을 직접 보려면 (macOS):
 

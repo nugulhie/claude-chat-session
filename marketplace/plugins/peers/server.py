@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=2.0", "websockets>=13", "httpx>=0.27"]
+# dependencies = ["mcp>=2.0", "websockets>=13", "httpx>=0.27", "certifi"]
 # ///
 """Claude Peers 채널 서버.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import sys
 import uuid
 from hashlib import sha256
@@ -25,6 +26,7 @@ from typing import Any
 from urllib.parse import quote
 
 import anyio
+import certifi
 import httpx
 import mcp_types as types
 import websockets
@@ -97,6 +99,39 @@ if BROKER and BROKER.startswith("http://"):
             file=sys.stderr, flush=True,
         )
 
+def build_ssl_context() -> ssl.SSLContext:
+    """httpx 와 websockets 가 같은 CA 묶음을 보게 만든다.
+
+    httpx 는 기본으로 certifi 를 쓰지만 websockets 는 OpenSSL 의 기본 신뢰
+    저장소를 쓴다. uv 가 받아 오는 관리형 CPython 은 그 저장소가 비어 있는
+    경우가 있어서, 같은 서버에 REST 는 붙고 WebSocket 만 TLS 검증에 실패한다.
+    증상은 "모든 도구가 409" 하나뿐이고 서버 액세스 로그에는 /stream 요청이
+    아예 남지 않아, 원인을 서버에서 찾으면 영영 못 찾는다.
+
+    사내 TLS 검사 장비를 쓰면 사설 루트 CA 가 필요하다. PEERS_CA_BUNDLE 또는
+    표준 SSL_CERT_FILE 로 지정한다.
+    """
+    ca = env("PEERS_CA_BUNDLE") or env("SSL_CERT_FILE")
+    if ca and not Path(ca).exists():
+        log(f"경고: CA 파일 {ca} 이(가) 없습니다. certifi 기본값을 씁니다.")
+        ca = None
+    return ssl.create_default_context(cafile=ca or certifi.where())
+
+
+SSL_CTX = build_ssl_context()
+
+# WebSocket 이 왜 못 붙었는지. 도구가 409 를 받으면 이 값을 같이 보여 준다.
+# 이게 없으면 사용자는 "세션이 없습니다" 만 보고 원인을 짐작할 수 없다.
+LAST_WS_ERROR: str | None = None
+
+
+def ws_failure_hint(e: BaseException) -> str:
+    detail = f"{type(e).__name__}: {e}"
+    if isinstance(e, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
+        return (detail + " — TLS 인증서 검증 실패입니다. 사내 TLS 검사 장비를 쓴다면 "
+                "사설 루트 CA 파일 경로를 PEERS_CA_BUNDLE 에 지정하세요.")
+    return detail
+
 INSTRUCTIONS = f"""
 peers 채널: 사내 동료 개발자의 Claude Code 세션과 질문/답변을 주고받는다. 이 세션의 workspace 이름은 "{WORKSPACE}"이고, 질문 수신은 {'켜져 있다' if LISTEN else '꺼져 있다'}.
 이 세션은 "{ROOM}" 방에서 시작했다 — join_room 으로 옮겼다면 그 도구가 돌려준 방이 현재 방이다. 같은 방 세션만 list_peers 에 보이고 질문할 수 있다. 방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 들어올 수 있고 방 이름과 주제는 전원에게 보인다. 방을 근거로 민감한 내용을 공유하지 않는다.
@@ -116,7 +151,7 @@ async def call_broker(method: str, path: str, body: dict | None = None) -> str:
         raise RuntimeError(
             "peers 플러그인 설정(broker_url, token)이 비어 있습니다. /plugin 에서 peers 설정을 확인하세요."
         )
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, verify=SSL_CTX) as client:
         res = await client.request(
             method,
             BROKER + path,
@@ -128,7 +163,12 @@ async def call_broker(method: str, path: str, body: dict | None = None) -> str:
             content=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
         )
     if res.status_code >= 400:
-        raise RuntimeError(f"broker {res.status_code}: {res.text}")
+        msg = f"broker {res.status_code}: {res.text}"
+        # 409 는 "이 세션이 브로커에 등록되지 않았다"는 뜻이고, 등록은 WebSocket 이
+        # 한다. 그러니 409 의 진짜 원인은 거의 항상 WebSocket 연결 실패다.
+        if res.status_code == 409 and LAST_WS_ERROR:
+            msg += f"\n채널 연결 실패: {LAST_WS_ERROR}"
+        raise RuntimeError(msg)
     return res.text
 
 
@@ -347,6 +387,7 @@ async def notify_channel(content: str, meta: dict[str, str]) -> None:
 
 # ─── 브로커 스트림 → 세션 푸쉬 ───────────────────────────────────────────
 async def connect() -> None:
+    global LAST_WS_ERROR
     if not BROKER or not TOKEN:
         log("broker_url/token 미설정: 브로커에 연결하지 않음")
         return
@@ -366,8 +407,15 @@ async def connect() -> None:
             "x-peers-room-subject": quote(ROOM_SUBJECT),
         }
         try:
-            async with websockets.connect(url, additional_headers=headers, max_size=64 * 1024) as ws:
+            async with websockets.connect(
+                url,
+                additional_headers=headers,
+                max_size=64 * 1024,
+                # http 브로커(로컬 개발)에는 ssl 인자를 주면 안 된다.
+                ssl=SSL_CTX if url.startswith("wss://") else None,
+            ) as ws:
                 backoff = 1.0
+                LAST_WS_ERROR = None
                 log(f"connected workspace={WORKSPACE} listening={LISTEN}")
                 async for raw in ws:
                     try:
@@ -396,7 +444,8 @@ async def connect() -> None:
             code = getattr(e, "code", None)
             if code == 4001:  # 같은 sid의 새 연결이 자리를 넘겨받았다
                 return
-            log(f"disconnected ({e}), {backoff:.0f}s 후 재연결")
+            LAST_WS_ERROR = ws_failure_hint(e)
+            log(f"disconnected ({LAST_WS_ERROR}), {backoff:.0f}s 후 재연결")
             await anyio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 

@@ -85,6 +85,18 @@ WantedBy=multi-user.target
 | `ROOM_RESERVE_SEC` | `1800` | `create_room`으로 만든 빈 방이 아무도 안 들어와도 남아 있는 시간 |
 | `MAX_RESERVED_PER_USER` | `5` | 한 사용자가 동시에 예약해 둘 수 있는 **빈** 방 수. 초과하면 429 |
 
+### 클라이언트(채널 서버) 쪽
+
+개발자 머신에서 `claude` 앞에 붙이거나 셸 환경에 둡니다.
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `PEERS_LISTEN` | `0` | `1`이면 남의 질문을 받습니다 |
+| `PEERS_WORKSPACE` | 레포 디렉터리 이름 | 주소의 `@` 뒷부분. ASCII만 가능 |
+| `PEERS_ROOM` | `public` | 시작할 방 이름 |
+| `PEERS_ROOM_SUBJECT` | 없음 | 방 주제. 한글 가능 |
+| `PEERS_CA_BUNDLE` | certifi 번들 | 사설 루트 CA(PEM) 경로. 사내 TLS 검사 장비를 쓰는 망에서 필요합니다. `SSL_CERT_FILE`도 같은 용도로 인식합니다 |
+
 `QUESTION_TTL_SEC`을 늘릴 때는 신중하세요. 길수록 질문자가 오래 기다리고, 그동안 열린 질문이 `hops` 계산에 잡혀 그 세션의 다른 질문을 막습니다.
 
 방은 메모리에만 있고 사람이 다 나가면 사라집니다. `ROOM_RESERVE_SEC`은 그 예외로, `create_room` 직후 아무도 없는 동안 방 이름을 잡아 두는 시간입니다. 예약은 브로커 재시작에 사라지지만 그동안 아무도 들어오지 않은 방이라 손실이 없습니다.

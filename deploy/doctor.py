@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["websockets>=13", "httpx>=0.27"]
+# dependencies = ["websockets>=13", "httpx>=0.27", "certifi"]
 # ///
 """peers 연결 진단.
 
@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import re
+import ssl
 import sys
 import uuid
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
+import certifi
 import httpx
 import websockets
 
@@ -55,11 +58,31 @@ def main() -> int:
         ws_name = "doctor-ascii-fallback"
         print(f"      이 진단은 {ws_name!r} 로 대신 시험합니다.")
 
-    # 2) REST
-    print("\n[2] REST (/api/peers)")
+    # 2) TLS — httpx(certifi)와 websockets(OpenSSL 기본)가 다른 저장소를 보면
+    #    REST 만 되고 WebSocket 만 깨진다. 그 차이를 여기서 드러낸다.
+    ca = os.environ.get("PEERS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    ctx = ssl.create_default_context(cafile=ca or certifi.where())
+    if base.startswith("https://"):
+        print("\n[2] TLS")
+        print(f"{OK} CA 묶음: {ca or certifi.where()}")
+        host = urlparse(base).hostname or ""
+        for label, c in (("OpenSSL 기본(websockets 가 쓰던 것)", ssl.create_default_context()),
+                         ("certifi/지정 CA", ctx)):
+            try:
+                with socket.create_connection((host, 443), timeout=10) as sock:
+                    with c.wrap_socket(sock, server_hostname=host):
+                        print(f"{OK} {label}: 검증 통과")
+            except ssl.SSLCertVerificationError as e:
+                print(f"{BAD} {label}: {e.verify_message or e}")
+                print("      사내 TLS 검사 장비를 쓴다면 사설 루트 CA 경로를 PEERS_CA_BUNDLE 에 지정하세요.")
+            except Exception as e:
+                print(f"{WARN} {label}: {type(e).__name__}: {str(e)[:100]}")
+
+    # 3) REST
+    print("\n[3] REST (/api/peers)")
     hdr = {"authorization": f"Bearer {token}", "x-peers-session": sid}
     try:
-        r = httpx.get(f"{base}/api/peers", headers=hdr, timeout=15)
+        r = httpx.get(f"{base}/api/peers", headers=hdr, timeout=15, verify=ctx)
         if r.status_code == 200:
             print(f"{OK} 200 — 세션이 이미 등록돼 있습니다")
         elif r.status_code == 409:
@@ -77,7 +100,7 @@ def main() -> int:
         return 1
 
     # 3) WebSocket — 실제로 세션을 등록하는 경로
-    print("\n[3] WebSocket (/stream)")
+    print("\n[4] WebSocket (/stream)")
     url = re.sub(r"^http", "ws", base) + "/stream"
     headers = {
         "authorization": f"Bearer {token}",
@@ -90,9 +113,10 @@ def main() -> int:
 
     async def probe() -> int:
         try:
-            async with websockets.connect(url, additional_headers=headers, open_timeout=20):
+            async with websockets.connect(url, additional_headers=headers, open_timeout=20,
+                                          ssl=ctx if url.startswith("wss://") else None):
                 print(f"{OK} 연결 성공 — 세션이 등록됐습니다")
-                r = httpx.get(f"{base}/api/peers", headers=hdr, timeout=15)
+                r = httpx.get(f"{base}/api/peers", headers=hdr, timeout=15, verify=ctx)
                 if r.status_code == 200:
                     print(f"{OK} 이 상태에서 /api/peers 가 200 입니다. 정상 동작합니다.")
                 else:
