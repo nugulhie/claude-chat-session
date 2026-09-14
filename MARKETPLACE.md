@@ -116,8 +116,11 @@ claude plugin marketplace add https://github.com/nugulhie/claude-chat-session.gi
 ```bash
 claude plugin install peers@claude-peers \
   --config broker_url=https://peers.example.com \
-  --config token=<개인 토큰>
+  --config token=<개인 토큰> \
+  --config default_room=webhook-dup      # 선택. 생략하면 public
 ```
+
+`default_room`은 선택입니다. 설정하지 않으면 `public`에서 시작하고, 세션마다 `PEERS_ROOM` 환경변수가 이 값을 덮어씁니다. 방 이름은 영문/숫자/`.` `_` `-` 만 쓸 수 있습니다(최대 64자) — 형식이 어긋나면 `public`으로 떨어집니다.
 
 필수 설정을 빠뜨리면 알려줍니다.
 

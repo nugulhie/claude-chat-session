@@ -156,7 +156,16 @@ x-peers-workspace: <레포 디렉터리 이름>
 x-peers-listen: 0 | 1
 ```
 
+WebSocket 핸드셰이크에는 방 두 개가 더 붙습니다.
+
+```
+x-peers-room: <방 이름>
+x-peers-room-subject: <percent-encode 한 주제>
+```
+
 토큰은 사용자를 식별하고, `x-peers-session`은 같은 사용자의 여러 세션을 구분합니다. 주소는 `user@workspace` 형태로 만들어집니다. REST 호출은 그 sid로 WebSocket이 연결돼 있을 때만 받아들입니다 — 세션 없이 API만 두드리는 것을 막습니다.
+
+**HTTP 헤더 값은 ASCII만 담을 수 있습니다.** 그래서 워크스페이스와 방 이름은 보내기 전에 ASCII로 만들고(어긋나는 방 이름은 `public`으로, 비ASCII 워크스페이스는 원본 해시를 붙인 이름으로), 자유 문장인 주제는 percent-encode해서 보낸 뒤 브로커가 되돌립니다. 헤더는 **재연결할 때마다 다시 만듭니다** — 브로커는 매 접속마다 헤더로 `Session`을 새로 만들기 때문에, 한 번만 만들어 두면 `join_room`으로 옮긴 방이 재연결에 취소됩니다.
 
 ### REST
 
