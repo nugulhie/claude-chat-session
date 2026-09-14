@@ -64,6 +64,7 @@ if BROKER and BROKER.startswith("http://"):
 
 INSTRUCTIONS = f"""
 peers 채널: 사내 동료 개발자의 Claude Code 세션과 질문/답변을 주고받는다. 이 세션의 workspace 이름은 "{WORKSPACE}"이고, 질문 수신은 {'켜져 있다' if LISTEN else '꺼져 있다'}.
+이 세션이 속한 방은 "{ROOM}"이다. 같은 방 세션만 list_peers 에 보이고 질문할 수 있다. 방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 들어올 수 있고 방 이름과 주제는 전원에게 보인다. 방을 근거로 민감한 내용을 공유하지 않는다.
 
 peers 채널 이벤트는 <channel> 태그로 도착하며 kind 속성으로 구분한다.
 - kind="question" (msg_id, from, hops 포함): 동료 Claude의 질문. peer-collab 스킬의 "질문 받기" 규칙을 따르고, 반드시 reply 도구에 msg_id를 넘겨 답한다.
@@ -117,6 +118,20 @@ async def _check_inbox(a: dict) -> str:
 
 async def _set_status(a: dict) -> str:
     return await call_broker("POST", "/api/status", {"summary": a.get("summary"), "listening": a.get("listening")})
+
+
+async def _create_room(a: dict) -> str:
+    return await call_broker("POST", "/api/rooms",
+                             {"subject": a.get("subject"), "name": a.get("name")})
+
+
+async def _join_room(a: dict) -> str:
+    return await call_broker("POST", "/api/rooms/join",
+                             {"room": a.get("room"), "subject": a.get("subject")})
+
+
+async def _list_rooms(a: dict) -> str:
+    return await call_broker("GET", "/api/rooms")
 
 
 TOOLS: list[tuple[types.Tool, Any]] = [
@@ -189,6 +204,52 @@ TOOLS: list[tuple[types.Tool, Any]] = [
             },
         ),
         _set_status,
+    ),
+    (
+        types.Tool(
+            name="create_room",
+            description=(
+                "새 방을 만들고 이름을 돌려준다. 만들기만 하고 입장하지는 않으므로, "
+                "들어가려면 join_room 을 부르거나 PEERS_ROOM 으로 세션을 다시 띄운다. "
+                "방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 "
+                "들어올 수 있고 방 이름과 주제는 전원에게 보인다."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "방 설명 한 줄. 최대 200자"},
+                    "name": {"type": "string", "description": "원하는 방 이름. 생략하면 브로커가 생성"},
+                },
+            },
+        ),
+        _create_room,
+    ),
+    (
+        types.Tool(
+            name="join_room",
+            description=(
+                "이 세션을 다른 방으로 옮긴다. 없는 방이면 새로 생긴다. "
+                "public 으로 부르면 기본 공개 방으로 돌아온다. "
+                "옮겨도 이미 받은 질문에는 계속 reply 할 수 있다."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "room": {"type": "string", "description": "옮겨갈 방 이름"},
+                    "subject": {"type": "string", "description": "방이 새로 생길 때만 쓰이는 설명"},
+                },
+                "required": ["room"],
+            },
+        ),
+        _join_room,
+    ),
+    (
+        types.Tool(
+            name="list_rooms",
+            description="지금 열려 있는 방 목록. 이름, 주제, 인원을 보여준다. 이 도구만 방 경계를 넘는다.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        _list_rooms,
     ),
 ]
 BY_NAME = {t.name: (t, fn) for t, fn in TOOLS}

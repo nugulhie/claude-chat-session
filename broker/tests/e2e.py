@@ -151,19 +151,6 @@ class Peer:
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return res.get("instructions", "")
 
-    def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
-        req = urllib.request.Request(
-            BROKER_URL + path, method=method,
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={"authorization": f"Bearer {self.token}",
-                     "x-peers-session": self.sid,
-                     "content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(req) as r:
-                return r.status, json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read())
-
     def list_tools(self) -> list[str]:
         return sorted(t["name"] for t in self._request("tools/list")["tools"])
 
@@ -230,9 +217,11 @@ def main() -> int:
         dave = peer("dave", "infra", True)
 
         # 1. 도구와 instructions
-        assert alice.list_tools() == ["ask_peer", "check_inbox", "list_peers", "reply", "set_status"]
+        assert alice.list_tools() == ["ask_peer", "check_inbox", "create_room",
+                                      "join_room", "list_peers", "list_rooms",
+                                      "reply", "set_status"]
         assert "payments-web" in alice.instructions
-        ok("도구 5개와 instructions 노출")
+        ok("도구 8개와 instructions 노출")
 
         # 2. presence
         peers = {p["address"]: p for p in alice.call("list_peers")["data"]["peers"]}
@@ -399,6 +388,21 @@ def main() -> int:
                                {"name": "public"})
         assert st3 == 400, (st3, res)
         ok("create_room: 이름 생성, 중복 409, public 400")
+
+        # 16. 도구로 방을 만들고 옮긴다
+        assert erin.list_tools() == ["ask_peer", "check_inbox", "create_room",
+                                     "join_room", "list_peers", "list_rooms",
+                                     "reply", "set_status"]
+        made2 = erin.call("create_room", {"subject": "옮겨갈 방"})["data"]
+        listed = erin.call("list_rooms")["data"]["rooms"]
+        assert any(r["room"] == made2["room"] and r["peers"] == 0 for r in listed), \
+            f"예약된 빈 방이 목록에 없음: {listed}"
+        moved = erin.call("join_room", {"room": made2["room"]})["data"]
+        assert moved["room"] == made2["room"] and moved["peers"] == 1, moved
+        frank.call("join_room", {"room": made2["room"]})
+        seen2 = [p["address"] for p in erin.call("list_peers")["data"]["peers"]]
+        assert "bob@room-b" in seen2, f"같은 방으로 옮겼는데 안 보임: {seen2}"
+        ok("create_room / list_rooms / join_room 도구")
 
         print(f"\n{passed}개 통과")
         return 0
