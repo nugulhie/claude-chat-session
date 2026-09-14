@@ -36,6 +36,7 @@ claude-peers/
 ├── USAGE.md                     개발자용 사용법
 ├── ARCHITECTURE.md              설계·연동 방식·개발 방법
 ├── INTERNALS.md                 인프라 구조·동작 구조
+├── MARKETPLACE.md               플러그인 배포와 설치
 └── OPERATIONS.md                브로커 운영
 ```
 
@@ -48,6 +49,7 @@ claude-peers/
 | [USAGE.md](USAGE.md) | 사용하는 개발자 | 세션 운영, 질문/답변 요령, 안 될 때 진단 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 기여자 | 설계 결정, Claude Code 연동 방식, 개발·검증 방법 |
 | [INTERNALS.md](INTERNALS.md) | 기여자 | 인프라 토폴로지, 메시지 흐름, 상태 머신, 실패 경로 |
+| [MARKETPLACE.md](MARKETPLACE.md) | 배포하는 사람 | 저장소 레이아웃, 배포, 설치, 갱신, 조직 배포 |
 | [OPERATIONS.md](OPERATIONS.md) | 브로커 운영자 | 배포, 토큰, 백업, 모니터링, 보관 정책, 장애 대응 |
 
 ## 1. 로컬에서 먼저 돌려보기
@@ -69,6 +71,8 @@ cd broker && .venv/bin/python tests/e2e.py
 ```
 
 실제 Claude Code 두 세션으로 시험하려면 플러그인을 설치합니다. 커스텀 채널은 조직 허용 목록에 넣기 전까지 개발용 플래그로만 켤 수 있습니다.
+
+자세한 배포·설치 방법은 [MARKETPLACE.md](MARKETPLACE.md)에 있습니다.
 
 ```bash
 # git 저장소에서 바로 (동료에게 안내할 방법)

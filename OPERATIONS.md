@@ -235,19 +235,15 @@ claude plugin marketplace add <owner>/<repo>
 claude plugin install peers@acme-internal --config broker_url=<주소> --config token=<토큰>
 ```
 
-**매니페스트는 저장소 루트의 `.claude-plugin/marketplace.json`이어야 합니다.** 하위 폴더에 두면 git으로 받을 때 "Marketplace file not found"로 실패합니다. 비공개 저장소면 개발자에게 git 접근 권한이 있어야 합니다.
+저장소 레이아웃, 버전 올리기, 비공개 저장소, 갱신 흐름은 [MARKETPLACE.md](MARKETPLACE.md)에 정리돼 있습니다.
 
-**개발자 머신에 `uv`가 필요합니다.** 채널 서버는 `uv run --script`로 뜨고, 의존성은 스크립트 첫머리의 PEP 723 메타데이터에 선언돼 있어 uv가 알아서 받아 캐시합니다. Claude Code는 플러그인 의존성을 설치해 주지 않으므로(2.1.268에서 확인), uv에 맡기는 이 방식이 설치 경로에서 의존성이 빠지는 사고를 구조적으로 막아 줍니다.
-
-배포 안내에 `uv` 설치를 함께 넣으세요.
+**개발자 머신에 `uv`가 필요합니다.** 채널 서버는 `uv run --script`로 뜨고, 의존성은 스크립트 첫머리의 PEP 723 메타데이터에 선언돼 있어 uv가 알아서 받아 캐시합니다. 배포 안내에 uv 설치를 함께 넣으세요.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 첫 설치자에게서 `claude mcp list`의 `plugin:peers:peers`가 `✔ Connected`인지 확인하면 됩니다.
-
-플러그인을 갱신하면 버전을 올리세요. `plugin.json`의 `version`이 캐시 디렉터리 이름이 되므로, 올리지 않으면 기존 설치자에게 새 코드가 내려가지 않습니다.
 
 ## 조직 설정 배포
 
