@@ -157,3 +157,7 @@ alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --al
 - MCP 서버가 뜨는데 "설정이 비어 있습니다" 오류가 나면, `plugin.json`의 `${user_config.*}` 치환이 동작하지 않는 환경일 수 있습니다. 이 경우 env를 `"PEERS_TOKEN": "${PEERS_TOKEN:-}"` 형태로 바꾸고 셸 환경변수로 전달하세요.
 
 채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#5-안-될-때)에 있습니다.
+
+## 라이선스
+
+MIT — [LICENSE](LICENSE)
