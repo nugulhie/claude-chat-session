@@ -5,14 +5,14 @@
   "version": "0.1.0",
   "description": "사내 동료 개발자의 Claude Code 세션에 질문을 푸쉬하고 답을 받는 채널",
   "author": {
-    "name": "Platform Team",
-    "email": "platform@acme.example"
+    "name": "nugulhie",
+    "url": "https://github.com/nugulhie"
   },
   "userConfig": {
     "broker_url": {
       "type": "string",
       "title": "Broker URL",
-      "description": "사내 peers 브로커 주소 (예: https://peers.acme.internal)",
+      "description": "peers 브로커 주소 (예: https://peers.example.com 또는 http://192.168.0.10:8081)",
       "required": true
     },
     "token": {
@@ -42,5 +42,6 @@
     {
       "server": "peers"
     }
-  ]
+  ],
+  "homepage": "https://github.com/nugulhie/claude-chat-session"
 }

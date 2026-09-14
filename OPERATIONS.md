@@ -231,8 +231,8 @@ systemctl start claude-peers
 저장소를 push하면 그대로 마켓플레이스가 됩니다. 개발자는 경로를 받을 필요 없이 저장소 이름만 있으면 됩니다.
 
 ```bash
-claude plugin marketplace add <owner>/<repo>
-claude plugin install peers@acme-internal --config broker_url=<주소> --config token=<토큰>
+claude plugin marketplace add nugulhie/claude-chat-session
+claude plugin install peers@claude-peers --config broker_url=<주소> --config token=<토큰>
 ```
 
 저장소 레이아웃, 버전 올리기, 비공개 저장소, 갱신 흐름은 [MARKETPLACE.md](MARKETPLACE.md)에 정리돼 있습니다.

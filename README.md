@@ -76,20 +76,20 @@ cd broker && .venv/bin/python tests/e2e.py
 
 ```bash
 # git 저장소에서 바로 (동료에게 안내할 방법)
-claude plugin marketplace add <owner>/<repo>
+claude plugin marketplace add nugulhie/claude-chat-session
 
 # 또는 이 저장소를 클론해 뒀다면 로컬 경로로
 claude plugin marketplace add .
-claude plugin install peers@acme-internal \
+claude plugin install peers@claude-peers \
   --config broker_url=http://127.0.0.1:8080 --config token=<alice 토큰>
 
 # 터미널 A: 질문하는 세션
 cd ~/work/payments-web
-claude --dangerously-load-development-channels plugin:peers@acme-internal
+claude --dangerously-load-development-channels plugin:peers@claude-peers
 
 # 터미널 B: 질문 받는 세션 (bob 토큰으로 설치한 환경, 또는 다른 계정/머신)
 cd ~/work/billing-api
-PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:peers@acme-internal
+PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:peers@claude-peers
 ```
 
 A 세션에서 "billing-api 쪽 Claude한테 취소 웹훅 재시도 정책이 어디 정의돼 있는지 물어봐"라고 요청하면 흐름을 확인할 수 있습니다.
@@ -106,21 +106,21 @@ A 세션에서 "billing-api 쪽 Claude한테 취소 웹훅 재시도 정책이 �
 
 개발자에게 전달할 문서는 [USAGE.md](USAGE.md)입니다. 질문/답변 작성 요령, 안 될 때 진단 순서, 거부 응답별 대처가 정리돼 있습니다. 아래는 요약입니다.
 
-설치는 `/plugin install peers@acme-internal`로 합니다. 설치할 때 개인 토큰을 입력합니다.
+설치는 `/plugin install peers@claude-peers`로 합니다. 설치할 때 개인 토큰을 입력합니다.
 
 세션은 두 종류로 나눠 쓰는 것을 권장합니다.
 
 **작업 세션 (질문만 함)**: 평소 작업하는 세션입니다. 답이 푸쉬로 들어오도록 채널은 켭니다.
 
 ```bash
-claude --channels plugin:peers@acme-internal
+claude --channels plugin:peers@claude-peers
 ```
 
 **응답 전용 세션 (질문 받음)**: 레포마다 하나씩 백그라운드 터미널에 띄워 둡니다. 작업 세션의 컨텍스트가 남의 질문으로 오염되지 않고, 읽기 전용으로 제한할 수 있습니다.
 
 ```bash
 cd ~/work/billing-api
-PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal \
+PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
   --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"
 ```
@@ -130,8 +130,8 @@ PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal \
 셸 alias 예시:
 
 ```bash
-alias cc='claude --channels plugin:peers@acme-internal'
-alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal --allowedTools "mcp__plugin_peers_peers__reply" --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"'
+alias cc='claude --channels plugin:peers@claude-peers'
+alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers --allowedTools "mcp__plugin_peers_peers__reply" --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"'
 ```
 
 ## 4. 브로커 정책 요약

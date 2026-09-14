@@ -1,19 +1,27 @@
 {
   "channelsEnabled": true,
   "allowedChannelPlugins": [
-    { "marketplace": "acme-internal", "plugin": "peers" }
+    {
+      "marketplace": "claude-peers",
+      "plugin": "peers"
+    }
   ],
   "extraKnownMarketplaces": {
-    "acme-internal": {
-      "source": { "source": "github", "repo": "acme/claude-plugins" }
+    "claude-peers": {
+      "source": {
+        "source": "github",
+        "repo": "nugulhie/claude-chat-session"
+      }
     }
   },
   "enabledPlugins": {
-    "peers@acme-internal": true
+    "peers@claude-peers": true
   },
   "pluginConfigs": {
-    "peers@acme-internal": {
-      "options": { "broker_url": "https://peers.acme.internal" }
+    "peers@claude-peers": {
+      "options": {
+        "broker_url": "https://peers.example.com"
+      }
     }
   },
   "permissions": {

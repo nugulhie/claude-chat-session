@@ -11,14 +11,14 @@
 **작업 세션** — 평소 코딩하는 세션입니다. 질문을 보내고 답을 받지만, 남의 질문은 받지 않습니다.
 
 ```bash
-claude --channels plugin:peers@acme-internal
+claude --channels plugin:peers@claude-peers
 ```
 
 **응답 전용 세션** — 내가 담당하는 레포마다 하나씩, 백그라운드 터미널에 띄워 둡니다. 남의 질문은 여기로만 들어옵니다.
 
 ```bash
 cd ~/work/billing-api
-PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal \
+PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
   --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"
 ```
@@ -30,8 +30,8 @@ PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal \
 alias로 만들어 두면 편합니다.
 
 ```bash
-alias cc='claude --channels plugin:peers@acme-internal'
-alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@acme-internal \
+alias cc='claude --channels plugin:peers@claude-peers'
+alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
   --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"'
 ```

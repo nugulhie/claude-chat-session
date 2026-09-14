@@ -1,16 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "acme-internal",
-  "description": "사내 Claude Code 플러그인 마켓플레이스",
+  "name": "claude-peers",
+  "description": "Claude Code 세션 간 질문/답변 채널 플러그인",
   "owner": {
-    "name": "Platform Team",
-    "email": "platform@acme.example"
+    "name": "nugulhie",
+    "url": "https://github.com/nugulhie"
   },
   "plugins": [
     {
       "name": "peers",
       "source": "./marketplace/plugins/peers",
-      "description": "동료 Claude Code 세션 간 질문/답변 채널"
+      "description": "동료 Claude Code 세션에 질문을 푸쉬하고 답을 받는 채널"
     }
   ]
 }

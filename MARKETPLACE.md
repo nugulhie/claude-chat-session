@@ -3,8 +3,8 @@
 플러그인을 사람들에게 전달하는 방법입니다. 파일을 압축해 보내는 대신 **저장소 이름 하나만 알려주면** 됩니다.
 
 ```bash
-claude plugin marketplace add <owner>/<repo>
-claude plugin install peers@<마켓플레이스 이름>
+claude plugin marketplace add nugulhie/claude-chat-session
+claude plugin install peers@claude-peers
 ```
 
 이 문서는 배포하는 쪽과 설치하는 쪽을 모두 다룹니다. 브로커 운영은 [OPERATIONS.md](OPERATIONS.md)를 보세요.
@@ -48,20 +48,20 @@ claude-peers/                          ← 저장소 루트
 ```json
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "acme-internal",
-  "description": "사내 Claude Code 플러그인 마켓플레이스",
-  "owner": { "name": "Platform Team", "email": "platform@acme.example" },
+  "name": "claude-peers",
+  "description": "Claude Code 세션 간 질문/답변 채널 플러그인",
+  "owner": { "name": "nugulhie", "url": "https://github.com/nugulhie" },
   "plugins": [
     {
       "name": "peers",
       "source": "./marketplace/plugins/peers",
-      "description": "동료 Claude Code 세션 간 질문/답변 채널"
+      "description": "동료 Claude Code 세션에 질문을 푸쉬하고 답을 받는 채널"
     }
   ]
 }
 ```
 
-`name`이 설치할 때 쓰는 이름입니다. `claude plugin install peers@acme-internal`의 `@` 뒤가 이것입니다. **저장소 이름과 무관하게 이 값이 쓰이므로**, 공개 배포할 거면 저장소 성격에 맞게 정하세요. 이 값을 바꾸면 기존 설치자의 설치 명령도 바뀝니다.
+`name`이 설치할 때 쓰는 이름입니다. `claude plugin install peers@claude-peers`의 `@` 뒤가 이것입니다. **저장소 이름과 무관하게 이 값이 쓰이므로**, 공개 배포할 거면 저장소 성격에 맞게 정하세요. 이 값을 바꾸면 기존 설치자의 설치 명령도 바뀝니다.
 
 플러그인 하나에 `plugin.json`이 하나씩 따로 있습니다. 둘의 역할이 다릅니다.
 
@@ -81,7 +81,7 @@ git add -A && git commit -m "..." && git push
 **고칠 때마다 `plugin.json`의 `version`을 올리세요.** 버전이 캐시 디렉터리 이름이 됩니다.
 
 ```
-~/.claude/plugins/cache/acme-internal/peers/0.1.0/
+~/.claude/plugins/cache/claude-peers/peers/0.1.0/
                                             ^^^^^
 ```
 
@@ -114,7 +114,7 @@ claude plugin marketplace add https://github.com/nugulhie/claude-chat-session.gi
 그다음 플러그인을 설치합니다. `userConfig`가 있으면 `--config`로 넘깁니다.
 
 ```bash
-claude plugin install peers@acme-internal \
+claude plugin install peers@claude-peers \
   --config broker_url=https://peers.example.com \
   --config token=<개인 토큰>
 ```
@@ -122,7 +122,7 @@ claude plugin install peers@acme-internal \
 필수 설정을 빠뜨리면 알려줍니다.
 
 ```
-1 userConfig option not yet set (1 required) — run /plugin configure peers@acme-internal
+1 userConfig option not yet set (1 required) — run /plugin configure peers@claude-peers
 ```
 
 `sensitive: true`인 값(토큰 등)은 `settings.json`이 아니라 보안 저장소로 갑니다. 설정 파일을 열어봐도 안 보이는 게 정상입니다.
@@ -146,7 +146,7 @@ claude plugin marketplace add <소스> --scope project
 큰 저장소의 일부만 필요하면 체크아웃을 줄일 수 있습니다.
 
 ```bash
-claude plugin marketplace add <owner>/<repo> --sparse .claude-plugin plugins
+claude plugin marketplace add nugulhie/claude-chat-session --sparse .claude-plugin plugins
 ```
 
 ## 갱신
@@ -154,8 +154,8 @@ claude plugin marketplace add <owner>/<repo> --sparse .claude-plugin plugins
 두 단계입니다. 마켓플레이스를 새로고침하고, 플러그인을 올립니다.
 
 ```bash
-claude plugin marketplace update acme-internal   # 저장소 다시 받기 (이름 생략 시 전부)
-claude plugin update peers@acme-internal         # 플러그인 갱신 — 재시작해야 적용
+claude plugin marketplace update claude-peers   # 저장소 다시 받기 (이름 생략 시 전부)
+claude plugin update peers@claude-peers         # 플러그인 갱신 — 재시작해야 적용
 ```
 
 ## 비공개 저장소
@@ -171,13 +171,13 @@ managed settings로 배포하면 개발자가 `marketplace add`를 칠 필요도
 ```json
 {
   "extraKnownMarketplaces": {
-    "acme-internal": {
+    "claude-peers": {
       "source": { "source": "github", "repo": "nugulhie/claude-chat-session" }
     }
   },
-  "enabledPlugins": { "peers@acme-internal": true },
+  "enabledPlugins": { "peers@claude-peers": true },
   "pluginConfigs": {
-    "peers@acme-internal": { "options": { "broker_url": "https://peers.example.com" } }
+    "peers@claude-peers": { "options": { "broker_url": "https://peers.example.com" } }
   }
 }
 ```
