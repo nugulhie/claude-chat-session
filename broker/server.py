@@ -44,6 +44,12 @@ MAX_BODY = 64 * 1024
 SID_RE = re.compile(r"^[0-9a-f-]{36}$")
 WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$")
 
+DEFAULT_ROOM = "public"
+ROOM_RE = re.compile(r"^[\w.-]{1,64}$")
+ROOM_RESERVE_MS = int(float(os.environ.get("ROOM_RESERVE_SEC", 1800)) * 1000)
+MAX_RESERVED_PER_USER = int(os.environ.get("MAX_RESERVED_PER_USER", 5))
+MAX_SUBJECT = 200
+
 
 def log(*a: Any) -> None:
     print(time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}Z", *a, flush=True)
@@ -162,10 +168,42 @@ class Session:
     listening: bool
     ws: web.WebSocketResponse
     connected_at: int
+    room: str = DEFAULT_ROOM
     summary: str = ""
 
 
 sessions: dict[str, Session] = {}
+
+
+@dataclass
+class Room:
+    subject: str | None = None
+    reserved_until: int | None = None
+
+
+rooms: dict[str, Room] = {DEFAULT_ROOM: Room()}
+
+
+def room_peers(room: str) -> int:
+    return sum(1 for s in sessions.values() if s.room == room)
+
+
+def touch_room(room: str, subject: str | None = None) -> None:
+    """방을 등록한다. subject 는 최초 등록자만 설정한다."""
+    r = rooms.get(room)
+    if r is None:
+        rooms[room] = Room(subject=subject or None)
+        return
+    if r.subject is None and subject:
+        r.subject = subject
+
+
+def drop_empty_rooms() -> None:
+    t = now()
+    for name in [n for n in rooms if n != DEFAULT_ROOM]:
+        r = rooms[name]
+        if room_peers(name) == 0 and (r.reserved_until is None or r.reserved_until < t):
+            del rooms[name]
 
 
 def address_of(s: Session) -> str:
@@ -266,6 +304,8 @@ def list_peers(me: Session) -> list[dict]:
                 "address": a,
                 "user": s.user,
                 "workspace": s.workspace,
+                "room": s.room,
+                "subject": rooms.get(s.room, Room()).subject,
                 "listening": False,
                 "summary": "",
                 "sessions": 0,
@@ -441,6 +481,10 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
     raw_ws = request.headers.get("x-peers-workspace", "")
     workspace = raw_ws if WORKSPACE_RE.match(raw_ws) else "unknown"
 
+    raw_room = request.headers.get("x-peers-room", "")
+    room = raw_room if ROOM_RE.match(raw_room) else DEFAULT_ROOM
+    raw_subject = (request.headers.get("x-peers-room-subject") or "")[:MAX_SUBJECT]
+
     prev = sessions.get(sid)
     if prev:
         await prev.ws.close(code=4001, message=b"replaced")
@@ -452,9 +496,11 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
         listening=request.headers.get("x-peers-listen") == "1",
         ws=ws,
         connected_at=now(),
+        room=room,
     )
     sessions[sid] = s
-    log(f"connect {address_of(s)} sid={sid[:8]} listening={s.listening}")
+    touch_room(room, raw_subject or None)
+    log(f"connect {address_of(s)} sid={sid[:8]} listening={s.listening} room={room}")
 
     # 1) 이 세션으로 보냈지만 ack 못 받은 메시지 재전송
     for m in db.execute(
@@ -492,6 +538,7 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
         # 새 연결이 이미 자리를 차지했으면 건드리지 않는다
         if sessions.get(sid) is s:
             del sessions[sid]
+            drop_empty_rooms()
         log(f"disconnect {address_of(s)} sid={sid[:8]}")
     return ws
 

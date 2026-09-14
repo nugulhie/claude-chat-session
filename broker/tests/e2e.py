@@ -225,6 +225,12 @@ def main() -> int:
         assert again["summary"] == "청구 배치 리팩터링 중"
         ok("set_status: 작업 요약 공유")
 
+        # 2b. 기본 방은 public 이고 list_peers 에 방이 보인다
+        peers_now = alice.call("list_peers")["data"]["peers"]
+        assert all(p.get("room") == "public" for p in peers_now), \
+            f"방 미지정 세션은 public 이어야 함: {peers_now}"
+        ok("방 미지정 세션은 public 에 들어간다")
+
         # 3. 질문 → 푸쉬 → 답변 → 푸쉬
         asked = alice.call("ask_peer", {"to": "bob", "question": "취소 웹훅 재시도 정책 위치?",
                                         "context": "payments-web 중복 수신 버그"})
