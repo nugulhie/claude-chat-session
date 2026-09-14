@@ -19,3 +19,6 @@ node_modules/
 
 # OS
 .DS_Store
+
+# git worktree 작업공간
+.worktrees/
