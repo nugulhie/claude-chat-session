@@ -404,6 +404,36 @@ def main() -> int:
         assert "bob@room-b" in seen2, f"같은 방으로 옮겼는데 안 보임: {seen2}"
         ok("create_room / list_rooms / join_room 도구")
 
+        # 17. 방을 옮겨도 이전 방에서 받은 질문에 답할 수 있다
+        gina = peer("carol", "room-c", True, room="ROOM-C")
+        # dave 는 시나리오 13에서 토큰이 폐기됐으므로 bob 을 쓴다
+        asker = peer("bob", "room-c2", False, room="ROOM-C")
+        q = asker.call("ask_peer", {"to": "carol@room-c", "question": "옮기기 전 질문"})
+        assert q["error"] is None, q["error"]
+        ev = wait_for(lambda: next((e for e in gina.events
+                                    if e["meta"]["msg_id"] == q["data"]["msg_id"]), None),
+                      "carol got question")
+        gina.call("join_room", {"room": "ROOM-ELSEWHERE"})
+        late = gina.call("reply", {"msg_id": ev["meta"]["msg_id"], "text": "옮긴 뒤 답변"})
+        assert late["error"] is None, f"방을 옮긴 뒤 답장이 막힘: {late['error']}"
+        ans = wait_for(lambda: next((e for e in asker.events
+                                     if e["meta"].get("reply_to") == q["data"]["msg_id"]), None),
+                       "bob got answer")
+        assert "옮긴 뒤 답변" in ans["content"]
+        ok("방을 옮겨도 이전 방에서 받은 질문에 reply 된다")
+
+        # 18. messages.room 은 보낸 시점 값으로 고정된다
+        import sqlite3 as _s
+        con = _s.connect(BROKER_ENV["PEERS_DB"]); con.row_factory = _s.Row
+        row = con.execute("SELECT room FROM messages WHERE id = ?",
+                          (q["data"]["msg_id"],)).fetchone()
+        assert row["room"] == "ROOM-C", f"질문이 보낸 시점 방에 묶이지 않음: {row['room']}"
+        arow = con.execute("SELECT room FROM messages WHERE reply_to = ?",
+                           (q["data"]["msg_id"],)).fetchone()
+        assert arow["room"] == "ROOM-C", f"답변이 질문의 방에 묶이지 않음: {arow['room']}"
+        con.close()
+        ok("messages.room 이 보낸 시점 방으로 고정된다")
+
         print(f"\n{passed}개 통과")
         return 0
     except Exception as e:

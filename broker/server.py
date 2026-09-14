@@ -115,6 +115,7 @@ db.executescript(
     hops       INTEGER NOT NULL DEFAULT 0,
     body       TEXT NOT NULL,
     context    TEXT,
+    room       TEXT NOT NULL DEFAULT 'public',
     status     TEXT NOT NULL,              -- queued | pushed | answered | expired | read | dropped
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -123,11 +124,16 @@ db.executescript(
   CREATE INDEX IF NOT EXISTS idx_to_user ON messages(to_user, kind, status);
 """
 )
+# 기존 DB 에는 컬럼이 없으므로 없을 때만 더한다
+_cols = {r["name"] for r in db.execute("PRAGMA table_info(messages)")}
+if "room" not in _cols:
+    db.execute(f"ALTER TABLE messages ADD COLUMN room TEXT NOT NULL DEFAULT '{DEFAULT_ROOM}'")
+db.execute("CREATE INDEX IF NOT EXISTS idx_room ON messages(room, created_at)")
 db.commit()
 
 COLS = (
     "id, kind, from_user, from_ws, from_sid, to_user, to_ws, to_sid, "
-    "reply_to, hops, body, context, status, created_at, updated_at"
+    "reply_to, hops, body, context, room, status, created_at, updated_at"
 )
 
 
@@ -141,13 +147,14 @@ def create_message(**m: Any) -> dict:
         "from_user": None,
         "from_ws": None,
         "from_sid": None,
+        "room": DEFAULT_ROOM,
         "status": "queued",
         **m,
         "created_at": t,
         "updated_at": t,
     }
     db.execute(
-        f"INSERT INTO messages ({COLS}) VALUES ({', '.join('?' * 15)})",
+        f"INSERT INTO messages ({COLS}) VALUES ({', '.join('?' * 16)})",
         [row[c.strip()] for c in COLS.split(",")],
     )
     db.commit()
@@ -383,6 +390,7 @@ def ask(me: Session, body: dict) -> dict:
         hops=hops,
         body=question,
         context=context or None,
+        room=me.room,
     )
     push(msg)
     log(f"ask {msg['id']} {address_of(me)} -> {address_of(target)} hops={hops}")
@@ -412,6 +420,7 @@ def reply(me: Session, body: dict) -> dict:
         to_sid=question["from_sid"],
         reply_to=question["id"],
         body=text,
+        room=question["room"],
     )
     set_status("answered", question["id"])
     push(answer)
@@ -644,6 +653,7 @@ async def sweeper() -> None:
                         f"{round(QUESTION_TTL_MS / 60000)}분 안에 답을 받지 못해 만료되었습니다. "
                         f"질문: {question['body'][:200]}"
                     ),
+                    room=question["room"],
                 )
                 push(notice)
                 log(f"expired {question['id']}")
