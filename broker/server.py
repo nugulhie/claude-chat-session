@@ -43,7 +43,7 @@ MAX_SUMMARY = 300
 MAX_BODY = 64 * 1024
 
 SID_RE = re.compile(r"^[0-9a-f-]{36}$")
-WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$")
+WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)  # ROOM_RE 와 같은 이유로 ASCII 전용
 
 DEFAULT_ROOM = "public"
 # re.ASCII: 파이썬의 \w 는 유니코드 인식이라 한글을 통과시키는데, 방 이름은 HTTP 헤더로

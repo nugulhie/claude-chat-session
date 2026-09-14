@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -43,12 +44,32 @@ def env(k: str) -> str | None:
     return v if v and "${" not in v else None
 
 
+def ascii_name(raw: str, fallback: str) -> str:
+    """핸드셰이크 헤더로 보낼 수 있는 ASCII 이름으로 바꾼다.
+
+    HTTP 헤더 값은 ASCII 만 담을 수 있다. 그렇다고 비ASCII 를 `_` 로 치환만 하면
+    `결제-웹` 과 `인증-웹` 이 둘 다 `__-_` 가 되어 서로 다른 디렉터리가 같은 이름을
+    갖는다. 워크스페이스는 `user@workspace` 주소의 절반이라 뭉개지면 ask_peer 의
+    대상 지정이 어긋난다. 그래서 비ASCII 가 섞여 있으면 원본 해시 6자를 붙여
+    구분을 유지한다. 순수 ASCII 이름은 예전과 한 글자도 달라지지 않는다.
+    """
+    safe = re.sub(r"[^\w.-]", "_", raw, flags=re.ASCII)[:64]
+    if raw.isascii():
+        return safe
+    tag = sha256(raw.encode("utf-8")).hexdigest()[:6]
+    kept = safe.strip("_-.")  # 한글만 있던 이름은 `__-_` 같은 껍데기만 남는다
+    return f"{kept[:57]}-{tag}" if kept else f"{fallback}-{tag}"
+
+
 BROKER = (env("PEERS_BROKER_URL") or "").rstrip("/") or None
 TOKEN = env("PEERS_TOKEN")
 LISTEN = env("PEERS_LISTEN") == "1"
-WORKSPACE = re.sub(
-    r"[^\w.-]", "_", env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
-)[:64]
+_raw_workspace = env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
+WORKSPACE = ascii_name(_raw_workspace, "ws")
+if not _raw_workspace.isascii():
+    log(f'경고: 워크스페이스 이름 "{_raw_workspace}" 은(는) ASCII 가 아니라 헤더로 보낼 수 없어 '
+        f'"{WORKSPACE}" 로 바꿔 보냅니다. 읽기 좋은 이름을 쓰려면 PEERS_WORKSPACE 를 '
+        "영문/숫자/. _ - 로 설정하세요.")
 DEFAULT_ROOM = "public"
 # 브로커와 같은 규칙. re.ASCII 인 이유는 방 이름이 WebSocket 핸드셰이크 헤더로 나가는데
 # HTTP 헤더 값은 ASCII 만 담을 수 있기 때문이다. 한글 방 이름을 그대로 보내면
