@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from aiohttp import WSMsgType, web
 
@@ -45,7 +46,9 @@ SID_RE = re.compile(r"^[0-9a-f-]{36}$")
 WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$")
 
 DEFAULT_ROOM = "public"
-ROOM_RE = re.compile(r"^[\w.-]{1,64}$")
+# re.ASCII: 파이썬의 \w 는 유니코드 인식이라 한글을 통과시키는데, 방 이름은 HTTP 헤더로
+# 도착한다. 헤더에는 ASCII 만 담기므로 유니코드를 허용해 봐야 검증까지 오지 못한다.
+ROOM_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)
 ROOM_RESERVE_MS = int(float(os.environ.get("ROOM_RESERVE_SEC", 1800)) * 1000)
 MAX_RESERVED_PER_USER = int(os.environ.get("MAX_RESERVED_PER_USER", 5))
 MAX_SUBJECT = 200
@@ -571,7 +574,10 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
 
     raw_room = request.headers.get("x-peers-room", "")
     room = raw_room if ROOM_RE.match(raw_room) else DEFAULT_ROOM
-    raw_subject = (request.headers.get("x-peers-room-subject") or "")[:MAX_SUBJECT]
+    # 주제는 한글이 들어가므로 채널 서버가 percent-encode 해서 보낸다. 자르기 전에 풀어야
+    # 이스케이프 한가운데서 잘리지 않는다. 인코딩하지 않는 구버전 클라이언트의 ASCII 값은
+    # unquote 를 통과해도 그대로다.
+    raw_subject = unquote(request.headers.get("x-peers-room-subject") or "")[:MAX_SUBJECT]
 
     prev = sessions.get(sid)
     if prev:

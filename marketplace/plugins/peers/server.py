@@ -21,6 +21,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import anyio
 import httpx
@@ -48,7 +49,20 @@ LISTEN = env("PEERS_LISTEN") == "1"
 WORKSPACE = re.sub(
     r"[^\w.-]", "_", env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
 )[:64]
-ROOM = env("PEERS_ROOM") or env("PEERS_DEFAULT_ROOM") or "public"
+DEFAULT_ROOM = "public"
+# 브로커와 같은 규칙. re.ASCII 인 이유는 방 이름이 WebSocket 핸드셰이크 헤더로 나가는데
+# HTTP 헤더 값은 ASCII 만 담을 수 있기 때문이다. 한글 방 이름을 그대로 보내면
+# websockets 가 연결 자체를 거부해서 세션이 영영 등록되지 않는다.
+ROOM_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)
+
+_raw_room = env("PEERS_ROOM") or env("PEERS_DEFAULT_ROOM") or DEFAULT_ROOM
+if ROOM_RE.match(_raw_room):
+    ROOM = _raw_room
+else:
+    # 스펙대로 public 으로 떨어뜨린다. 조용히 사라지면 원인을 알 수 없으므로 알린다.
+    log(f'경고: 방 이름 "{_raw_room}" 은(는) 영문/숫자/. _ - 만 쓸 수 있습니다(최대 64자). '
+        f'{DEFAULT_ROOM} 방에서 시작합니다.')
+    ROOM = DEFAULT_ROOM
 ROOM_SUBJECT = (env("PEERS_ROOM_SUBJECT") or "")[:200]
 SID = env("PEERS_SID") or str(uuid.uuid4())
 
@@ -311,7 +325,8 @@ async def connect() -> None:
         "x-peers-workspace": WORKSPACE,
         "x-peers-listen": "1" if LISTEN else "0",
         "x-peers-room": ROOM,
-        "x-peers-room-subject": ROOM_SUBJECT,
+        # 헤더는 ASCII 만 담으므로 한글 주제는 percent-encode 해서 보낸다. 브로커가 unquote 한다.
+        "x-peers-room-subject": quote(ROOM_SUBJECT),
     }
     backoff = 1.0
     while True:
