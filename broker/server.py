@@ -562,9 +562,13 @@ async def healthz(request: web.Request) -> web.Response:
 # ─── WebSocket: 세션 연결과 푸쉬 ─────────────────────────────────────────
 async def stream(request: web.Request) -> web.WebSocketResponse:
     user = authenticate(request)
-    sid = request.headers.get("x-peers-session", "")
-    if not user or not SID_RE.match(sid):
+    if not user:
         return web.Response(status=401, text="Unauthorized")
+    # 세션 ID 형식 오류를 401 로 묶으면 멀쩡한 토큰이 거부당한 것처럼 보인다.
+    # 원인이 전혀 다르므로 상태 코드와 문구를 나눈다.
+    sid = request.headers.get("x-peers-session", "")
+    if not SID_RE.match(sid):
+        return web.Response(status=400, text="x-peers-session 은 UUID 여야 합니다")
 
     ws = web.WebSocketResponse(heartbeat=30, max_msg_size=MAX_BODY)
     await ws.prepare(request)

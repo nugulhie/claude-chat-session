@@ -25,3 +25,6 @@ node_modules/
 
 # SDD 작업공간 (스크래치)
 .superpowers/
+
+# uv 가 e2e 실행 중 만드는 부산물 — 배포는 requirements.txt 를 쓴다
+uv.lock

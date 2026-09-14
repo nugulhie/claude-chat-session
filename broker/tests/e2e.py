@@ -183,6 +183,30 @@ def http_status(path: str, token: str) -> int:
         return e.code
 
 
+def stream_status(token: str, sid: str) -> int:
+    """/stream 핸드셰이크를 시도하고 HTTP 상태만 본다.
+
+    업그레이드가 받아들여지면 aiohttp 가 101 을 주는데 urllib 는 그걸 성공으로
+    읽지 않으므로, 여기서는 거부 코드(400/401)를 구분하는 데만 쓴다.
+    """
+    req = urllib.request.Request(BROKER_URL + "/stream", headers={
+        "authorization": f"Bearer {token}",
+        "x-peers-session": sid,
+        "connection": "Upgrade",
+        "upgrade": "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+    })
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        # 업그레이드까지 갔다는 뜻 — 거부 코드가 아니다
+        return 101
+
+
 def err_body(msg: str) -> dict:
     return json.loads(msg[msg.index("{"):])
 
@@ -349,6 +373,13 @@ def main() -> int:
         # 9. 인증
         assert http_status("/api/peers", "pk_wrong") == 401
         ok("잘못된 토큰 401")
+
+        # /stream 은 토큰과 세션 ID 를 따로 판정한다. 둘을 401 로 묶으면 세션 ID 형식
+        # 오류가 "토큰이 거부됐다"로 보여서 멀쩡한 토큰을 몇 시간씩 의심하게 된다.
+        assert stream_status(tokens["alice"], str(uuid.uuid4())) != 401
+        assert stream_status("pk_wrong", str(uuid.uuid4())) == 401
+        assert stream_status(tokens["alice"], "not-a-uuid") == 400
+        ok("/stream: 토큰 실패 401, 세션 ID 형식 실패 400")
 
         # 10. 같은 user가 두 워크스페이스에서 수신 중이면 user만으로는 지정할 수 없다
         bob2 = peer("bob", "ledger-api", True)

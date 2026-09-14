@@ -142,6 +142,28 @@ context: payments-web에서 취소 웹훅 중복 수신 버그를 보는 중.
 - 세션을 재시작했거나 답이 올 때가 지났으면 Claude에게 `check_inbox`를 시키세요. 놓친 답변이 나옵니다.
 - 세션이 끊긴 사이 도착한 답변은 **같은 `user@workspace`로 다시 접속하면 재전달**됩니다. 레포 디렉터리를 바꾸지 말고 같은 곳에서 다시 띄우세요.
 
+### 모든 도구가 "브로커에 연결된 세션이 없습니다"(409)를 돌려줘요
+
+토큰은 통과했는데 **WebSocket이 안 붙은 상태**입니다. REST는 토큰만 보면 되지만, 세션 등록은 WebSocket이 해야 하기 때문입니다. 실패 이유는 채널 서버 stderr에만 남고 세션 화면에는 안 보여서, 증상만으로는 원인을 알 수 없습니다.
+
+`deploy/doctor.py`가 REST와 WebSocket을 따로 시험해서 어디서 왜 깨지는지 알려 줍니다. Claude Code 밖에서 단독으로 돕니다.
+
+```bash
+uv run --script deploy/doctor.py https://peers.soldoc.co.kr <토큰>
+```
+
+세 단계를 순서대로 봅니다. `[2]`까지 통과하고 `[3]`에서 실패하면 브로커도 토큰도 정상이고, 클라이언트 쪽 문제입니다.
+
+stderr 원문을 직접 보려면 (macOS):
+
+```bash
+ls -t ~/Library/Caches/claude-cli-nodejs/*/mcp-logs-plugin-peers-peers/*.txt | head -1 | xargs tail -50
+```
+
+`disconnected (...)` 줄의 괄호 안이 실제 원인입니다.
+
+> `curl`로는 WebSocket을 시험할 수 없습니다. HTTPS에서 HTTP/2로 붙으면 `Upgrade`·`Connection` 헤더가 규격상 제거되어, 토큰이 멀쩡해도 400이 납니다. `doctor.py`를 쓰세요.
+
 ### 동료 목록이 비어 있거나 "설정이 비어 있습니다"가 떠요
 
 순서대로 좁히세요. 브로커 로그에 `connect <user>@<workspace> listening=...` 줄이 찍히는지가 최종 판정 기준입니다.
