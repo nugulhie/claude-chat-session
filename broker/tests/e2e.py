@@ -79,7 +79,8 @@ def revoke(user: str) -> None:
 class Peer:
     """채널 서버 하나를 stdio로 붙잡고 Claude Code 흉내를 내는 가짜 클라이언트."""
 
-    def __init__(self, user: str, workspace: str, listen: bool, token: str):
+    def __init__(self, user: str, workspace: str, listen: bool, token: str,
+                 room: str | None = None, subject: str | None = None):
         self.user = user
         self.events: list[dict] = []
         self._next_id = 0
@@ -94,6 +95,8 @@ class Peer:
                 "PEERS_TOKEN": token,
                 "PEERS_LISTEN": "1" if listen else "0",
                 "PEERS_WORKSPACE": workspace,
+                **({"PEERS_ROOM": room} if room else {}),
+                **({"PEERS_ROOM_SUBJECT": subject} if subject else {}),
             },
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -198,8 +201,9 @@ def main() -> int:
     try:
         wait_for(up, "broker up")
 
-        def peer(u: str, ws: str, listen: bool) -> Peer:
-            p = Peer(u, ws, listen, tokens[u])
+        def peer(u: str, ws: str, listen: bool, room: str | None = None,
+                 subject: str | None = None) -> Peer:
+            p = Peer(u, ws, listen, tokens[u], room, subject)
             wait_for(lambda: not p.call("list_peers")["error"], f"{u} connected")
             return p
 
@@ -344,6 +348,15 @@ def main() -> int:
         revoke("dave")
         wait_for(lambda: "401" in (dave.call("list_peers")["error"] or ""), "dave 토큰 폐기 반영", 12)
         ok("--revoke 후 401 (tokens.json 자동 리로드)")
+
+        # 14. 방이 다르면 서로 보이지 않고 질문도 못 한다
+        erin = peer("alice", "room-a", True, room="ROOM-A")
+        frank = peer("bob", "room-b", True, room="ROOM-B")
+        seen = [p["address"] for p in erin.call("list_peers")["data"]["peers"]]
+        assert "bob@room-b" not in seen, f"다른 방 세션이 보임: {seen}"
+        blocked = erin.call("ask_peer", {"to": "bob@room-b", "question": "다른 방"})
+        assert "404" in blocked["error"], blocked["error"]
+        ok("방이 다르면 list_peers 에 안 보이고 질문도 404")
 
         print(f"\n{passed}개 통과")
         return 0

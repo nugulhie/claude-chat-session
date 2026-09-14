@@ -297,6 +297,8 @@ def my_session(request: web.Request, user: str) -> Session:
 def list_peers(me: Session) -> list[dict]:
     by_addr: dict[str, dict] = {}
     for s in sessions.values():
+        if s.room != me.room:
+            continue
         a = address_of(s)
         cur = by_addr.setdefault(
             a,
@@ -329,11 +331,15 @@ def ask(me: Session, body: dict) -> dict:
     candidates = [
         s
         for s in sessions.values()
-        if s.listening and s.sid != me.sid and (address_of(s) == to if "@" in to else s.user == to)
+        if s.listening
+        and s.sid != me.sid
+        and s.room == me.room
+        and (address_of(s) == to if "@" in to else s.user == to)
     ]
     if not candidates:
         available = [p["address"] for p in list_peers(me) if p["listening"] and not p["you"]]
-        raise HttpError(404, f"{to}: 지금 질문을 받을 수 있는 세션이 없습니다", available=available)
+        raise HttpError(404, f"{to}: 지금 이 방({me.room})에서 질문을 받을 수 있는 세션이 없습니다",
+                        available=available)
 
     addrs = sorted({address_of(s) for s in candidates})
     if len(addrs) > 1:

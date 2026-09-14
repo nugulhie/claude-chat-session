@@ -48,6 +48,8 @@ LISTEN = env("PEERS_LISTEN") == "1"
 WORKSPACE = re.sub(
     r"[^\w.-]", "_", env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
 )[:64]
+ROOM = env("PEERS_ROOM") or env("PEERS_DEFAULT_ROOM") or "public"
+ROOM_SUBJECT = (env("PEERS_ROOM_SUBJECT") or "")[:200]
 SID = str(uuid.uuid4())
 
 # 토큰과 질문/답변 본문이 이 주소로 나간다. 루프백이 아닌 평문 연결은 그대로 노출된다.
@@ -245,6 +247,8 @@ async def connect() -> None:
         "x-peers-session": SID,
         "x-peers-workspace": WORKSPACE,
         "x-peers-listen": "1" if LISTEN else "0",
+        "x-peers-room": ROOM,
+        "x-peers-room-subject": ROOM_SUBJECT,
     }
     backoff = 1.0
     while True:
