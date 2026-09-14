@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "peers",
   "displayName": "Claude Peers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "사내 동료 개발자의 Claude Code 세션에 질문을 푸쉬하고 답을 받는 채널",
   "author": {
     "name": "nugulhie",
