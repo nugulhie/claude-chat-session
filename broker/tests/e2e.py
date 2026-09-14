@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -79,8 +80,11 @@ def revoke(user: str) -> None:
 class Peer:
     """채널 서버 하나를 stdio로 붙잡고 Claude Code 흉내를 내는 가짜 클라이언트."""
 
-    def __init__(self, user: str, workspace: str, listen: bool, token: str):
+    def __init__(self, user: str, workspace: str, listen: bool, token: str,
+                 room: str | None = None, subject: str | None = None):
         self.user = user
+        self.sid = str(uuid.uuid4())
+        self.token = token
         self.events: list[dict] = []
         self._next_id = 0
         self._replies: dict[int, dict] = {}
@@ -92,8 +96,11 @@ class Peer:
                 **os.environ,
                 "PEERS_BROKER_URL": BROKER_URL,
                 "PEERS_TOKEN": token,
+                "PEERS_SID": self.sid,
                 "PEERS_LISTEN": "1" if listen else "0",
                 "PEERS_WORKSPACE": workspace,
+                **({"PEERS_ROOM": room} if room else {}),
+                **({"PEERS_ROOM_SUBJECT": subject} if subject else {}),
             },
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -183,10 +190,14 @@ def err_body(msg: str) -> dict:
 def main() -> int:
     global passed
     tokens = {u: issue_token(u) for u in ("alice", "bob", "carol", "dave")}
-    broker = subprocess.Popen(
-        [PY, "server.py"], cwd=BROKER_DIR, env=BROKER_ENV,
-        stdout=subprocess.DEVNULL if not os.environ.get("VERBOSE") else None, stderr=None,
-    )
+
+    def start_broker() -> subprocess.Popen:
+        return subprocess.Popen(
+            [PY, "server.py"], cwd=BROKER_DIR, env=BROKER_ENV,
+            stdout=subprocess.DEVNULL if not os.environ.get("VERBOSE") else None, stderr=None,
+        )
+
+    broker = start_broker()
 
     def up() -> bool:
         try:
@@ -198,8 +209,27 @@ def main() -> int:
     try:
         wait_for(up, "broker up")
 
-        def peer(u: str, ws: str, listen: bool) -> Peer:
-            p = Peer(u, ws, listen, tokens[u])
+        def restart_broker() -> None:
+            """브로커를 껐다 켠다. 붙어 있던 채널 서버들은 스스로 재연결한다."""
+            nonlocal broker
+            broker.terminate()
+            try:
+                broker.wait(timeout=5)
+            except Exception:
+                broker.kill()
+            broker = start_broker()
+            wait_for(up, "broker 재기동", 20)
+
+        def my_row(p: "Peer") -> dict | None:
+            """세션이 브로커에 등록돼 있으면 list_peers 안의 자기 자신 항목."""
+            r = p.call("list_peers")
+            if r["error"]:
+                return None
+            return next((x for x in r["data"]["peers"] if x["you"]), None)
+
+        def peer(u: str, ws: str, listen: bool, room: str | None = None,
+                 subject: str | None = None) -> Peer:
+            p = Peer(u, ws, listen, tokens[u], room, subject)
             wait_for(lambda: not p.call("list_peers")["error"], f"{u} connected")
             return p
 
@@ -209,9 +239,11 @@ def main() -> int:
         dave = peer("dave", "infra", True)
 
         # 1. 도구와 instructions
-        assert alice.list_tools() == ["ask_peer", "check_inbox", "list_peers", "reply", "set_status"]
+        assert alice.list_tools() == ["ask_peer", "check_inbox", "create_room",
+                                      "join_room", "list_peers", "list_rooms",
+                                      "reply", "set_status"]
         assert "payments-web" in alice.instructions
-        ok("도구 5개와 instructions 노출")
+        ok("도구 8개와 instructions 노출")
 
         # 2. presence
         peers = {p["address"]: p for p in alice.call("list_peers")["data"]["peers"]}
@@ -224,6 +256,12 @@ def main() -> int:
         again = [p for p in alice.call("list_peers")["data"]["peers"] if p["address"] == "bob@billing-api"][0]
         assert again["summary"] == "청구 배치 리팩터링 중"
         ok("set_status: 작업 요약 공유")
+
+        # 2b. 기본 방은 public 이고 list_peers 에 방이 보인다
+        peers_now = alice.call("list_peers")["data"]["peers"]
+        assert all(p.get("room") == "public" for p in peers_now), \
+            f"방 미지정 세션은 public 이어야 함: {peers_now}"
+        ok("방 미지정 세션은 public 에 들어간다")
 
         # 3. 질문 → 푸쉬 → 답변 → 푸쉬
         asked = alice.call("ask_peer", {"to": "bob", "question": "취소 웹훅 재시도 정책 위치?",
@@ -338,6 +376,164 @@ def main() -> int:
         revoke("dave")
         wait_for(lambda: "401" in (dave.call("list_peers")["error"] or ""), "dave 토큰 폐기 반영", 12)
         ok("--revoke 후 401 (tokens.json 자동 리로드)")
+
+        # 14. 방이 다르면 서로 보이지 않고 질문도 못 한다
+        erin = peer("alice", "room-a", True, room="ROOM-A")
+        frank = peer("bob", "room-b", True, room="ROOM-B")
+        seen = [p["address"] for p in erin.call("list_peers")["data"]["peers"]]
+        assert "bob@room-b" not in seen, f"다른 방 세션이 보임: {seen}"
+        blocked = erin.call("ask_peer", {"to": "bob@room-b", "question": "다른 방"})
+        assert "404" in blocked["error"], blocked["error"]
+        # 스펙: 404의 available 목록도 같은 방 기준이어야 한다.
+        # ROOM-A 에는 erin 혼자이고 available 은 본인을 뺀다 → 빈 목록이 맞다.
+        avail = err_body(blocked["error"])["available"]
+        assert avail == [], f"available 목록이 방 경계를 넘었다: {avail}"
+        ok("방이 다르면 list_peers 에 안 보이고 질문도 404 (available 도 방 기준)")
+
+        # 15. 방 API — 생성/조회/중복
+        def broker_post(tok, sid, path, body):
+            req = urllib.request.Request(BROKER_URL + path, method="POST",
+                             data=json.dumps(body).encode(),
+                             headers={"authorization": f"Bearer {tok}",
+                                      "x-peers-session": sid,
+                                      "content-type": "application/json"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read())
+
+        st, made = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"subject": "웹훅 조사"})
+        assert st == 200, (st, made)
+        assert made["room"].startswith("r-") and len(made["room"]) == 8, made
+        st2, dup = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"name": made["room"]})
+        assert st2 == 409, (st2, dup)
+        st3, res = broker_post(tokens["alice"], erin.sid, "/api/rooms",
+                               {"name": "public"})
+        assert st3 == 400, (st3, res)
+        ok("create_room: 이름 생성, 중복 409, public 400")
+
+        # 16. 도구로 방을 만들고 옮긴다
+        assert erin.list_tools() == ["ask_peer", "check_inbox", "create_room",
+                                     "join_room", "list_peers", "list_rooms",
+                                     "reply", "set_status"]
+        made2 = erin.call("create_room", {"subject": "옮겨갈 방"})["data"]
+        listed = erin.call("list_rooms")["data"]["rooms"]
+        assert any(r["room"] == made2["room"] and r["peers"] == 0 for r in listed), \
+            f"예약된 빈 방이 목록에 없음: {listed}"
+        moved = erin.call("join_room", {"room": made2["room"]})["data"]
+        assert moved["room"] == made2["room"] and moved["peers"] == 1, moved
+        frank.call("join_room", {"room": made2["room"]})
+        seen2 = [p["address"] for p in erin.call("list_peers")["data"]["peers"]]
+        assert "bob@room-b" in seen2, f"같은 방으로 옮겼는데 안 보임: {seen2}"
+        ok("create_room / list_rooms / join_room 도구")
+
+        # 17. 방을 옮겨도 이전 방에서 받은 질문에 답할 수 있다
+        gina = peer("carol", "room-c", True, room="ROOM-C")
+        # dave 는 시나리오 13에서 토큰이 폐기됐으므로 bob 을 쓴다
+        asker = peer("bob", "room-c2", False, room="ROOM-C")
+        q = asker.call("ask_peer", {"to": "carol@room-c", "question": "옮기기 전 질문"})
+        assert q["error"] is None, q["error"]
+        ev = wait_for(lambda: next((e for e in gina.events
+                                    if e["meta"]["msg_id"] == q["data"]["msg_id"]), None),
+                      "carol got question")
+        gina.call("join_room", {"room": "ROOM-ELSEWHERE"})
+        late = gina.call("reply", {"msg_id": ev["meta"]["msg_id"], "text": "옮긴 뒤 답변"})
+        assert late["error"] is None, f"방을 옮긴 뒤 답장이 막힘: {late['error']}"
+        ans = wait_for(lambda: next((e for e in asker.events
+                                     if e["meta"].get("reply_to") == q["data"]["msg_id"]), None),
+                       "bob got answer")
+        assert "옮긴 뒤 답변" in ans["content"]
+        ok("방을 옮겨도 이전 방에서 받은 질문에 reply 된다")
+
+        # 18. messages.room 은 보낸 시점 값으로 고정된다
+        import sqlite3 as _s
+        con = _s.connect(BROKER_ENV["PEERS_DB"]); con.row_factory = _s.Row
+        row = con.execute("SELECT room FROM messages WHERE id = ?",
+                          (q["data"]["msg_id"],)).fetchone()
+        assert row["room"] == "ROOM-C", f"질문이 보낸 시점 방에 묶이지 않음: {row['room']}"
+        arow = con.execute("SELECT room FROM messages WHERE reply_to = ?",
+                           (q["data"]["msg_id"],)).fetchone()
+        assert arow["room"] == "ROOM-C", f"답변이 질문의 방에 묶이지 않음: {arow['room']}"
+        con.close()
+        ok("messages.room 이 보낸 시점 방으로 고정된다")
+
+        # 19. 한글 주제·방 이름·워크스페이스로도 접속이 된다 (회귀 방지)
+        #     헤더 값은 ASCII 만 담을 수 있어서, 예전에는 이 조합이 핸드셰이크를 죽이고
+        #     세션이 영영 등록되지 않아 모든 도구가 409 를 돌려줬다.
+        KOR_SUBJECT = "취소 웹훅 중복 수신 조사"
+        han = peer("alice", "결제-웹", True, room="webhook-dup", subject=KOR_SUBJECT)
+        han_me = my_row(han)
+        assert han_me is not None, "한글 워크스페이스 세션이 브로커에 등록되지 않았다"
+        assert han_me["room"] == "webhook-dup", han_me
+        assert han_me["workspace"].isascii() and han_me["workspace"] != "unknown", han_me
+        listed_kor = [r for r in han.call("list_rooms")["data"]["rooms"] if r["room"] == "webhook-dup"]
+        assert listed_kor and listed_kor[0]["subject"] == KOR_SUBJECT, \
+            f"한글 주제가 보존되지 않았다: {listed_kor}"
+        ok("한글 주제/워크스페이스로 접속되고 주제가 그대로 보존된다")
+
+        # 20. 서로 다른 한글 워크스페이스가 같은 주소로 뭉개지지 않는다
+        #     비ASCII 를 `_` 로 치환만 하면 `결제-웹` 과 `인증-웹` 이 둘 다 `__-_` 가 된다.
+        kw1 = peer("bob", "결제-웹", True, room="ws-collide")
+        kw2 = peer("bob", "인증-웹", True, room="ws-collide")
+        kw_addrs = sorted(p["address"] for p in kw1.call("list_peers")["data"]["peers"])
+        assert len(set(kw_addrs)) == 2, f"다른 한글 워크스페이스가 같은 주소로 뭉개졌다: {kw_addrs}"
+        assert all(a.isascii() for a in kw_addrs), kw_addrs
+        kw2.close()
+        ok("한글 워크스페이스 두 개가 서로 다른 ASCII 주소를 갖는다")
+
+        # 21. 형식에 어긋나는 방 이름은 스펙대로 public 으로 떨어진다
+        kr_room = peer("carol", "kr-room", True, room="취소웹훅")
+        kr_me = my_row(kr_room)
+        assert kr_me is not None and kr_me["room"] == "public", \
+            f"한글 방 이름이 public 으로 떨어지지 않았다: {kr_me}"
+        kr_room.close()
+        ok("한글 방 이름은 접속을 죽이지 않고 public 으로 떨어진다")
+
+        # 22. join_room 으로 옮긴 방은 재연결 후에도 유지된다
+        #     예전에는 핸드셰이크 헤더가 재연결 루프 밖에서 한 번만 만들어져서
+        #     브로커가 튕기면 기동 시 방으로 조용히 되돌아갔다.
+        mover = peer("alice", "reconnect-ws", True, room="RC-START")
+        joined = mover.call("join_room", {"room": "RC-JOINED"})["data"]
+        assert joined["room"] == "RC-JOINED", joined
+        restart_broker()
+        back = wait_for(lambda: my_row(mover), "mover 재연결", 30)
+        assert back["room"] == "RC-JOINED", f"재연결하며 join_room 이 취소됐다: {back['room']}"
+        mover.close()
+        ok("join_room 으로 옮긴 방이 재연결 후에도 유지된다")
+
+        # 23. subject 는 첫 등록자만 설정한다 (스펙 시나리오 9)
+        subj1 = peer("alice", "subj-1", True, room="SUBJ-ROOM", subject="첫 주제")
+        subj2 = peer("bob", "subj-2", True, room="SUBJ-ROOM", subject="나중 주제")
+        shown = [r for r in subj2.call("list_rooms")["data"]["rooms"] if r["room"] == "SUBJ-ROOM"]
+        assert shown and shown[0]["subject"] == "첫 주제", f"나중 등록자가 주제를 덮어썼다: {shown}"
+        rejoined = subj2.call("join_room", {"room": "SUBJ-ROOM", "subject": "또 다른 주제"})["data"]
+        assert rejoined["subject"] == "첫 주제", f"join_room 의 subject 가 덮어썼다: {rejoined}"
+        subj1.close()
+        subj2.close()
+        ok("subject 는 첫 등록자만 설정한다")
+
+        # 24. hops 는 방을 넘어서도 누적된다 (스펙 시나리오 10)
+        #     질문 TTL 이 3초라 세션은 먼저 다 띄우고 질문만 연달아 보낸다.
+        hop_a1 = peer("alice", "hop-1", True, room="HOP-A")
+        hop_a2 = peer("bob", "hop-2", True, room="HOP-A")
+        hop_b1 = peer("carol", "hop-3", True, room="HOP-B")
+        hop_b2 = peer("alice", "hop-4", True, room="HOP-B")
+        hq1 = hop_a1.call("ask_peer", {"to": "bob@hop-2", "question": "HOP-A 에서 받은 질문"})
+        assert hq1["error"] is None, hq1["error"]
+        wait_for(lambda: next((e for e in hop_a2.events
+                               if e["meta"]["msg_id"] == hq1["data"]["msg_id"]), None), "hop-2 가 질문 받음")
+        hop_a2.call("join_room", {"room": "HOP-B"})
+        hq2 = hop_a2.call("ask_peer", {"to": "carol@hop-3", "question": "방을 넘어 다시 묻기"})
+        assert hq2["error"] is None, hq2["error"]
+        hev = wait_for(lambda: next((e for e in hop_b1.events
+                                     if e["meta"]["msg_id"] == hq2["data"]["msg_id"]), None), "hop-3 가 질문 받음")
+        assert hev["meta"]["hops"] == "1", f"방을 넘었더니 hops 가 초기화됐다: {hev['meta']}"
+        hq3 = hop_b1.call("ask_peer", {"to": "alice@hop-4", "question": "3단계"})
+        assert "422" in (hq3["error"] or ""), f"방을 넘어 한도를 우회했다: {hq3}"
+        ok("hops 는 방을 넘어서도 누적된다")
 
         print(f"\n{passed}개 통과")
         return 0

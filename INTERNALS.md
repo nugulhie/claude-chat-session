@@ -89,6 +89,7 @@ WebSocket은 30초마다 브로커가 ping을 보내 살아 있는지 확인합�
 | presence (접속 세션 목록) | **메모리** (`dict[sid, Session]`) | 전부 사라짐 |
 | rate limit 카운터 | **메모리** (`dict[key, list[timestamp]]`) | 0부터 다시 |
 | 작업 요약 / listening 여부 | **메모리** (세션 객체) | 사라짐 |
+| 방 목록 (`rooms`) | **메모리** (`dict[str, Room]`) | 사라짐, 세션이 재접속하며 복원 (아무도 없이 예약만 걸린 방은 유실) |
 | 모든 메시지와 상태 | **디스크** (`messages` 테이블) | 그대로 남음 |
 | 토큰 해시 | **디스크** (`tokens.json`) | 그대로 남음 |
 
@@ -126,7 +127,7 @@ sequenceDiagram
     CS-->>CC: capabilities + instructions
     CC->>CS: initialized
     Note over CS: MCP 루프와 같은 task group에서<br/>브로커 연결을 시작
-    CS->>BK: WS /stream (token, sid, workspace, listen)
+    CS->>BK: WS /stream (token, sid, workspace, listen, room, subject)
     BK-->>CS: 연결 수락
     Note over BK: sessions에 등록<br/>connect 로그 기록
     BK->>CS: 밀린 메시지 재전송 (있으면)
@@ -148,7 +149,7 @@ sequenceDiagram
 
     A->>CSA: ask_peer(to, question, context)
     CSA->>BK: POST /api/ask
-    Note over BK: 1. 대상 찾기 (listening=true, 내 sid 아님)<br/>2. hops = 열린 질문의 max+1<br/>3. 핑퐁 검사<br/>4. rate limit<br/>5. messages에 INSERT (queued)
+    Note over BK: 1. 대상 찾기 (listening=true, 내 sid 아님, 같은 방)<br/>2. hops = 열린 질문의 max+1<br/>3. 핑퐁 검사<br/>4. rate limit<br/>5. messages에 INSERT (queued, room=보내는 쪽 방)
     BK-->>CSA: msg_id, to, expires_in_sec
     CSA-->>A: 즉시 반환 — 기다리지 않음
 
@@ -236,6 +237,10 @@ stateDiagram-v2
 반대로 답변은 질문자가 기다리던 것이므로, 세션이 바뀌어도 같은 사람의 같은 레포라면 옮겨서 전달합니다. 옮길 때는 이전 세션이 정말 죽었는지 확인합니다 — 살아 있으면 건드리지 않습니다.
 
 `check_inbox`는 세션이나 워크스페이스와 무관하게 **사용자 단위로** 조회합니다. 다른 레포에서 띄운 세션에서도 놓친 답변을 가져올 수 있습니다.
+
+### 방은 헤더를 타고 따라온다
+
+브로커는 매 접속마다 핸드셰이크 헤더로 `Session`을 **새로** 만듭니다. 즉 방 소속은 세션 객체에만 있고 재연결하면 헤더 값으로 다시 정해집니다. 그래서 채널 서버는 `join_room`이 성공하면 자기가 들고 있는 방 이름을 갱신하고, 헤더도 **재연결할 때마다** 다시 만듭니다. 이렇게 하지 않으면 프록시 idle timeout이나 브로커 재시작 한 번에 세션이 기동 시 방으로 조용히 되돌아가고, 상대는 옮긴 방에 남아 서로를 보지 못합니다.
 
 ## 실패하면 어떻게 되나
 

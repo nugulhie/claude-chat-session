@@ -80,8 +80,12 @@ WantedBy=multi-user.target
 | `LIMIT_PER_USER` | `30` | 10분당 한 사용자의 질문 수 |
 | `LIMIT_PER_PAIR` | `10` | 10분당 같은 상대에게 보내는 질문 수 |
 | `SWEEP_MS` | `15000` | 만료 처리 주기 |
+| `ROOM_RESERVE_SEC` | `1800` | `create_room`으로 만든 빈 방이 아무도 안 들어와도 남아 있는 시간 |
+| `MAX_RESERVED_PER_USER` | `5` | 한 사용자가 동시에 예약해 둘 수 있는 **빈** 방 수. 초과하면 429 |
 
 `QUESTION_TTL_SEC`을 늘릴 때는 신중하세요. 길수록 질문자가 오래 기다리고, 그동안 열린 질문이 `hops` 계산에 잡혀 그 세션의 다른 질문을 막습니다.
+
+방은 메모리에만 있고 사람이 다 나가면 사라집니다. `ROOM_RESERVE_SEC`은 그 예외로, `create_room` 직후 아무도 없는 동안 방 이름을 잡아 두는 시간입니다. 예약은 브로커 재시작에 사라지지만 그동안 아무도 들어오지 않은 방이라 손실이 없습니다.
 
 ## 토큰 운영
 
@@ -150,10 +154,10 @@ sqlite3 /var/lib/claude-peers/peers.db "PRAGMA wal_checkpoint(TRUNCATE);"
 
 ```bash
 curl -s https://peers.example.com/healthz
-# {"ok":true,"sessions":3}
+# {"ok":true,"sessions":3,"rooms":2}
 ```
 
-인증이 필요 없고, `sessions`로 현재 접속 세션 수를 함께 알려줍니다. 이 값이 갑자기 0이 되면 프록시의 WebSocket upgrade나 idle timeout을 의심하세요.
+인증이 필요 없고, `sessions`로 현재 접속 세션 수를, `rooms`로 지금 살아 있는 방 수(`public` 포함)를 함께 알려줍니다. `sessions`가 갑자기 0이 되면 프록시의 WebSocket upgrade나 idle timeout을 의심하세요.
 
 ### 로그
 
@@ -190,7 +194,13 @@ FROM messages WHERE kind='question' AND status='expired';
 SELECT from_user, COUNT(*) FROM messages
 WHERE kind='question' AND created_at > (strftime('%s','now')-604800)*1000
 GROUP BY from_user ORDER BY 2 DESC;
+
+-- 한 방에서 오간 대화 전체
+SELECT created_at, kind, from_user, to_user, substr(body,1,80)
+FROM messages WHERE room = 'webhook-dup' ORDER BY created_at;
 ```
+
+`messages.room`은 **보낸 시점의 방**이고 이후 바뀌지 않습니다. 참여자가 나중에 방을 옮겨도 그 대화는 원래 방에 묶인 채로 남으므로, 방 단위 질의는 대화가 끝난 뒤에도 그대로 동작합니다. 방 자체는 메모리에만 있어 사람이 나가면 사라지지만 이 컬럼은 남습니다.
 
 ## 보관 정책
 
@@ -224,7 +234,7 @@ systemctl start claude-peers
 | 질문이 429 | 정상 동작입니다. 필요하면 `LIMIT_PER_PAIR`를 올리세요 |
 | 기동하자마자 죽는다 | `python -V`가 3.11 이상인지, `aiohttp`가 설치돼 있는지 |
 
-개발자 쪽 문제(채널이 안 붙음, "설정이 비어 있습니다")는 [USAGE.md의 진단 순서](USAGE.md#5-안-될-때)를 안내하세요. 대부분 브로커가 아니라 클라이언트 쪽 `uv` 설치 여부나 연결 실패 캐시입니다.
+개발자 쪽 문제(채널이 안 붙음, "설정이 비어 있습니다")는 [USAGE.md의 진단 순서](USAGE.md#6-안-될-때)를 안내하세요. 대부분 브로커가 아니라 클라이언트 쪽 `uv` 설치 여부나 연결 실패 캐시입니다.
 
 ## 플러그인 배포
 

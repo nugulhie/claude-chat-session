@@ -22,3 +22,6 @@ node_modules/
 
 # git worktree 작업공간
 .worktrees/
+
+# SDD 작업공간 (스크래치)
+.superpowers/

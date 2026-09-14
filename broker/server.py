@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from aiohttp import WSMsgType, web
 
@@ -42,7 +43,15 @@ MAX_SUMMARY = 300
 MAX_BODY = 64 * 1024
 
 SID_RE = re.compile(r"^[0-9a-f-]{36}$")
-WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$")
+WORKSPACE_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)  # ROOM_RE 와 같은 이유로 ASCII 전용
+
+DEFAULT_ROOM = "public"
+# re.ASCII: 파이썬의 \w 는 유니코드 인식이라 한글을 통과시키는데, 방 이름은 HTTP 헤더로
+# 도착한다. 헤더에는 ASCII 만 담기므로 유니코드를 허용해 봐야 검증까지 오지 못한다.
+ROOM_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)
+ROOM_RESERVE_MS = int(float(os.environ.get("ROOM_RESERVE_SEC", 1800)) * 1000)
+MAX_RESERVED_PER_USER = int(os.environ.get("MAX_RESERVED_PER_USER", 5))
+MAX_SUBJECT = 200
 
 
 def log(*a: Any) -> None:
@@ -109,6 +118,7 @@ db.executescript(
     hops       INTEGER NOT NULL DEFAULT 0,
     body       TEXT NOT NULL,
     context    TEXT,
+    room       TEXT NOT NULL DEFAULT 'public',
     status     TEXT NOT NULL,              -- queued | pushed | answered | expired | read | dropped
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -117,11 +127,16 @@ db.executescript(
   CREATE INDEX IF NOT EXISTS idx_to_user ON messages(to_user, kind, status);
 """
 )
+# 기존 DB 에는 컬럼이 없으므로 없을 때만 더한다
+_cols = {r["name"] for r in db.execute("PRAGMA table_info(messages)")}
+if "room" not in _cols:
+    db.execute(f"ALTER TABLE messages ADD COLUMN room TEXT NOT NULL DEFAULT '{DEFAULT_ROOM}'")
+db.execute("CREATE INDEX IF NOT EXISTS idx_room ON messages(room, created_at)")
 db.commit()
 
 COLS = (
     "id, kind, from_user, from_ws, from_sid, to_user, to_ws, to_sid, "
-    "reply_to, hops, body, context, status, created_at, updated_at"
+    "reply_to, hops, body, context, room, status, created_at, updated_at"
 )
 
 
@@ -135,13 +150,14 @@ def create_message(**m: Any) -> dict:
         "from_user": None,
         "from_ws": None,
         "from_sid": None,
+        "room": DEFAULT_ROOM,
         "status": "queued",
         **m,
         "created_at": t,
         "updated_at": t,
     }
     db.execute(
-        f"INSERT INTO messages ({COLS}) VALUES ({', '.join('?' * 15)})",
+        f"INSERT INTO messages ({COLS}) VALUES ({', '.join('?' * 16)})",
         [row[c.strip()] for c in COLS.split(",")],
     )
     db.commit()
@@ -162,10 +178,43 @@ class Session:
     listening: bool
     ws: web.WebSocketResponse
     connected_at: int
+    room: str = DEFAULT_ROOM
     summary: str = ""
 
 
 sessions: dict[str, Session] = {}
+
+
+@dataclass
+class Room:
+    subject: str | None = None
+    reserved_until: int | None = None
+    created_by: str | None = None
+
+
+rooms: dict[str, Room] = {DEFAULT_ROOM: Room()}
+
+
+def room_peers(room: str) -> int:
+    return sum(1 for s in sessions.values() if s.room == room)
+
+
+def touch_room(room: str, subject: str | None = None) -> None:
+    """방을 등록한다. subject 는 최초 등록자만 설정한다."""
+    r = rooms.get(room)
+    if r is None:
+        rooms[room] = Room(subject=subject or None)
+        return
+    if r.subject is None and subject:
+        r.subject = subject
+
+
+def drop_empty_rooms() -> None:
+    t = now()
+    for name in [n for n in rooms if n != DEFAULT_ROOM]:
+        r = rooms[name]
+        if room_peers(name) == 0 and (r.reserved_until is None or r.reserved_until < t):
+            del rooms[name]
 
 
 def address_of(s: Session) -> str:
@@ -259,6 +308,8 @@ def my_session(request: web.Request, user: str) -> Session:
 def list_peers(me: Session) -> list[dict]:
     by_addr: dict[str, dict] = {}
     for s in sessions.values():
+        if s.room != me.room:
+            continue
         a = address_of(s)
         cur = by_addr.setdefault(
             a,
@@ -266,6 +317,8 @@ def list_peers(me: Session) -> list[dict]:
                 "address": a,
                 "user": s.user,
                 "workspace": s.workspace,
+                "room": s.room,
+                "subject": rooms.get(s.room, Room()).subject,
                 "listening": False,
                 "summary": "",
                 "sessions": 0,
@@ -289,11 +342,15 @@ def ask(me: Session, body: dict) -> dict:
     candidates = [
         s
         for s in sessions.values()
-        if s.listening and s.sid != me.sid and (address_of(s) == to if "@" in to else s.user == to)
+        if s.listening
+        and s.sid != me.sid
+        and s.room == me.room
+        and (address_of(s) == to if "@" in to else s.user == to)
     ]
     if not candidates:
         available = [p["address"] for p in list_peers(me) if p["listening"] and not p["you"]]
-        raise HttpError(404, f"{to}: 지금 질문을 받을 수 있는 세션이 없습니다", available=available)
+        raise HttpError(404, f"{to}: 지금 이 방({me.room})에서 질문을 받을 수 있는 세션이 없습니다",
+                        available=available)
 
     addrs = sorted({address_of(s) for s in candidates})
     if len(addrs) > 1:
@@ -336,6 +393,7 @@ def ask(me: Session, body: dict) -> dict:
         hops=hops,
         body=question,
         context=context or None,
+        room=me.room,
     )
     push(msg)
     log(f"ask {msg['id']} {address_of(me)} -> {address_of(target)} hops={hops}")
@@ -365,6 +423,7 @@ def reply(me: Session, body: dict) -> dict:
         to_sid=question["from_sid"],
         reply_to=question["id"],
         body=text,
+        room=question["room"],
     )
     set_status("answered", question["id"])
     push(answer)
@@ -396,6 +455,78 @@ def inbox(me: Session) -> dict:
     return {"messages": [wire(r) for r in rows], "open_questions_to_me": [wire(r) for r in open_q]}
 
 
+ROOM_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+
+
+def gen_room_name() -> str:
+    import secrets
+    return "r-" + "".join(secrets.choice(ROOM_ALPHABET) for _ in range(6))
+
+
+def create_room(me: Session, body: dict) -> dict:
+    subject = _str(body.get("subject"), "subject", MAX_SUBJECT, required=False)
+    name = _str(body.get("name"), "name", 64, required=False)
+
+    if name:
+        if name == DEFAULT_ROOM:
+            raise HttpError(400, f"{DEFAULT_ROOM} 은 예약된 방 이름입니다")
+        if not ROOM_RE.match(name):
+            raise HttpError(400, "방 이름은 영문/숫자/. _ - 만 쓸 수 있습니다 (최대 64자)")
+        if name in rooms:
+            raise HttpError(409, f"{name}: 이미 있는 방입니다")
+    else:
+        for _ in range(20):
+            name = gen_room_name()
+            if name not in rooms:
+                break
+        else:
+            raise HttpError(500, "방 이름 생성 실패")
+
+    reserved = sum(
+        1 for n, r in rooms.items()
+        if r.reserved_until and r.reserved_until > now() and room_peers(n) == 0
+        and r.created_by == me.user
+    )
+    if reserved >= MAX_RESERVED_PER_USER:
+        raise HttpError(429, f"비어 있는 예약 방이 너무 많습니다 (최대 {MAX_RESERVED_PER_USER})")
+    if not allow(f"u:{me.user}", LIMIT_PER_USER):
+        raise HttpError(429, "요청 빈도 제한에 걸렸습니다. 잠시 후 다시 시도하세요")
+
+    rooms[name] = Room(subject=subject or None,
+                       reserved_until=now() + ROOM_RESERVE_MS,
+                       created_by=me.user)
+    log(f"room create {name} by {me.user}")
+    return {"room": name, "subject": subject or None,
+            "reserved_for_sec": ROOM_RESERVE_MS // 1000}
+
+
+def join_room(me: Session, body: dict) -> dict:
+    room = _str(body.get("room"), "room", 64).strip()
+    if not ROOM_RE.match(room):
+        raise HttpError(400, "방 이름은 영문/숫자/. _ - 만 쓸 수 있습니다 (최대 64자)")
+    subject = _str(body.get("subject"), "subject", MAX_SUBJECT, required=False)
+
+    old = me.room
+    me.room = room
+    touch_room(room, subject or None)
+    if old != room:
+        drop_empty_rooms()
+        log(f"room join {address_of(me)} {old} -> {room}")
+    return {"room": room, "subject": rooms[room].subject, "peers": room_peers(room)}
+
+
+def list_rooms(me: Session) -> dict:
+    t = now()
+    out = []
+    for name, r in rooms.items():
+        n = room_peers(name)
+        if n == 0 and name != DEFAULT_ROOM and not (r.reserved_until and r.reserved_until > t):
+            continue
+        out.append({"room": name, "subject": r.subject, "peers": n, "you": name == me.room})
+    out.sort(key=lambda x: (not x["you"], -x["peers"], x["room"]))
+    return {"rooms": out}
+
+
 # ─── 라우팅 ──────────────────────────────────────────────────────────────
 def json_response(status: int, body: dict) -> web.Response:
     return web.Response(
@@ -425,7 +556,7 @@ def guarded(handler, *, needs_body: bool):
 
 
 async def healthz(request: web.Request) -> web.Response:
-    return json_response(200, {"ok": True, "sessions": len(sessions)})
+    return json_response(200, {"ok": True, "sessions": len(sessions), "rooms": len(rooms)})
 
 
 # ─── WebSocket: 세션 연결과 푸쉬 ─────────────────────────────────────────
@@ -441,6 +572,13 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
     raw_ws = request.headers.get("x-peers-workspace", "")
     workspace = raw_ws if WORKSPACE_RE.match(raw_ws) else "unknown"
 
+    raw_room = request.headers.get("x-peers-room", "")
+    room = raw_room if ROOM_RE.match(raw_room) else DEFAULT_ROOM
+    # 주제는 한글이 들어가므로 채널 서버가 percent-encode 해서 보낸다. 자르기 전에 풀어야
+    # 이스케이프 한가운데서 잘리지 않는다. 인코딩하지 않는 구버전 클라이언트의 ASCII 값은
+    # unquote 를 통과해도 그대로다.
+    raw_subject = unquote(request.headers.get("x-peers-room-subject") or "")[:MAX_SUBJECT]
+
     prev = sessions.get(sid)
     if prev:
         await prev.ws.close(code=4001, message=b"replaced")
@@ -452,9 +590,11 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
         listening=request.headers.get("x-peers-listen") == "1",
         ws=ws,
         connected_at=now(),
+        room=room,
     )
     sessions[sid] = s
-    log(f"connect {address_of(s)} sid={sid[:8]} listening={s.listening}")
+    touch_room(room, raw_subject or None)
+    log(f"connect {address_of(s)} sid={sid[:8]} listening={s.listening} room={room}")
 
     # 1) 이 세션으로 보냈지만 ack 못 받은 메시지 재전송
     for m in db.execute(
@@ -492,6 +632,7 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
         # 새 연결이 이미 자리를 차지했으면 건드리지 않는다
         if sessions.get(sid) is s:
             del sessions[sid]
+            drop_empty_rooms()
         log(f"disconnect {address_of(s)} sid={sid[:8]}")
     return ws
 
@@ -518,6 +659,7 @@ async def sweeper() -> None:
                         f"{round(QUESTION_TTL_MS / 60000)}분 안에 답을 받지 못해 만료되었습니다. "
                         f"질문: {question['body'][:200]}"
                     ),
+                    room=question["room"],
                 )
                 push(notice)
                 log(f"expired {question['id']}")
@@ -527,6 +669,7 @@ async def sweeper() -> None:
                 (t, t - INBOX_TTL_MS),
             )
             db.commit()
+            drop_empty_rooms()
         except Exception as e:
             log("sweep error", repr(e))
 
@@ -553,6 +696,9 @@ def make_app() -> web.Application:
             web.post("/api/reply", guarded(reply, needs_body=True)),
             web.post("/api/status", guarded(set_session_status, needs_body=True)),
             web.get("/api/inbox", guarded(inbox, needs_body=False)),
+            web.post("/api/rooms", guarded(create_room, needs_body=True)),
+            web.post("/api/rooms/join", guarded(join_room, needs_body=True)),
+            web.get("/api/rooms", guarded(list_rooms, needs_body=False)),
         ]
     )
     app.on_startup.append(on_startup)

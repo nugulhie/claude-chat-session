@@ -116,8 +116,11 @@ claude plugin marketplace add https://github.com/nugulhie/claude-chat-session.gi
 ```bash
 claude plugin install peers@claude-peers \
   --config broker_url=https://peers.example.com \
-  --config token=<개인 토큰>
+  --config token=<개인 토큰> \
+  --config default_room=webhook-dup      # 선택. 생략하면 public
 ```
+
+`default_room`은 선택입니다. 설정하지 않으면 `public`에서 시작하고, 세션마다 `PEERS_ROOM` 환경변수가 이 값을 덮어씁니다. 방 이름은 영문/숫자/`.` `_` `-` 만 쓸 수 있습니다(최대 64자) — 형식이 어긋나면 `public`으로 떨어집니다.
 
 필수 설정을 빠뜨리면 알려줍니다.
 
@@ -195,7 +198,7 @@ managed settings로 배포하면 개발자가 `marketplace add`를 칠 필요도
 |---|---|
 | `Marketplace file not found` | 매니페스트가 저장소 루트에 없습니다. `.claude-plugin/marketplace.json`을 루트로 옮기세요 |
 | 클론 단계에서 실패 | 비공개 저장소인데 git 접근 권한이 없습니다 |
-| 설치는 됐는데 `CONNECTION_CLOSED` | 플러그인 런타임 문제입니다. [USAGE.md의 진단 순서](USAGE.md#5-안-될-때)를 따르세요 |
+| 설치는 됐는데 `CONNECTION_CLOSED` | 플러그인 런타임 문제입니다. [USAGE.md의 진단 순서](USAGE.md#6-안-될-때)를 따르세요 |
 | 고쳤는데 반영이 안 됨 | `plugin.json`의 `version`을 올렸는지 확인하고, `marketplace update` → `plugin update` 순서로 갱신하세요 |
 | `plugin details`에 `MCP servers (0)` | 표시상의 한계입니다. 인라인 `mcpServers` 선언을 인벤토리가 세지 않을 뿐, 실제로는 동작합니다 |
 

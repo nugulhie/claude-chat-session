@@ -19,8 +19,10 @@ import os
 import re
 import sys
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import anyio
 import httpx
@@ -42,13 +44,48 @@ def env(k: str) -> str | None:
     return v if v and "${" not in v else None
 
 
+def ascii_name(raw: str, fallback: str) -> str:
+    """핸드셰이크 헤더로 보낼 수 있는 ASCII 이름으로 바꾼다.
+
+    HTTP 헤더 값은 ASCII 만 담을 수 있다. 그렇다고 비ASCII 를 `_` 로 치환만 하면
+    `결제-웹` 과 `인증-웹` 이 둘 다 `__-_` 가 되어 서로 다른 디렉터리가 같은 이름을
+    갖는다. 워크스페이스는 `user@workspace` 주소의 절반이라 뭉개지면 ask_peer 의
+    대상 지정이 어긋난다. 그래서 비ASCII 가 섞여 있으면 원본 해시 6자를 붙여
+    구분을 유지한다. 순수 ASCII 이름은 예전과 한 글자도 달라지지 않는다.
+    """
+    safe = re.sub(r"[^\w.-]", "_", raw, flags=re.ASCII)[:64]
+    if raw.isascii():
+        return safe
+    tag = sha256(raw.encode("utf-8")).hexdigest()[:6]
+    kept = safe.strip("_-.")  # 한글만 있던 이름은 `__-_` 같은 껍데기만 남는다
+    return f"{kept[:57]}-{tag}" if kept else f"{fallback}-{tag}"
+
+
 BROKER = (env("PEERS_BROKER_URL") or "").rstrip("/") or None
 TOKEN = env("PEERS_TOKEN")
 LISTEN = env("PEERS_LISTEN") == "1"
-WORKSPACE = re.sub(
-    r"[^\w.-]", "_", env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
-)[:64]
-SID = str(uuid.uuid4())
+_raw_workspace = env("PEERS_WORKSPACE") or Path(env("CLAUDE_PROJECT_DIR") or os.getcwd()).name
+WORKSPACE = ascii_name(_raw_workspace, "ws")
+if not _raw_workspace.isascii():
+    log(f'경고: 워크스페이스 이름 "{_raw_workspace}" 은(는) ASCII 가 아니라 헤더로 보낼 수 없어 '
+        f'"{WORKSPACE}" 로 바꿔 보냅니다. 읽기 좋은 이름을 쓰려면 PEERS_WORKSPACE 를 '
+        "영문/숫자/. _ - 로 설정하세요.")
+DEFAULT_ROOM = "public"
+# 브로커와 같은 규칙. re.ASCII 인 이유는 방 이름이 WebSocket 핸드셰이크 헤더로 나가는데
+# HTTP 헤더 값은 ASCII 만 담을 수 있기 때문이다. 한글 방 이름을 그대로 보내면
+# websockets 가 연결 자체를 거부해서 세션이 영영 등록되지 않는다.
+ROOM_RE = re.compile(r"^[\w.-]{1,64}$", re.ASCII)
+
+_raw_room = env("PEERS_ROOM") or env("PEERS_DEFAULT_ROOM") or DEFAULT_ROOM
+if ROOM_RE.match(_raw_room):
+    ROOM = _raw_room
+else:
+    # 스펙대로 public 으로 떨어뜨린다. 조용히 사라지면 원인을 알 수 없으므로 알린다.
+    log(f'경고: 방 이름 "{_raw_room}" 은(는) 영문/숫자/. _ - 만 쓸 수 있습니다(최대 64자). '
+        f'{DEFAULT_ROOM} 방에서 시작합니다.')
+    ROOM = DEFAULT_ROOM
+ROOM_SUBJECT = (env("PEERS_ROOM_SUBJECT") or "")[:200]
+SID = env("PEERS_SID") or str(uuid.uuid4())
 
 # 토큰과 질문/답변 본문이 이 주소로 나간다. 루프백이 아닌 평문 연결은 그대로 노출된다.
 if BROKER and BROKER.startswith("http://"):
@@ -62,6 +99,7 @@ if BROKER and BROKER.startswith("http://"):
 
 INSTRUCTIONS = f"""
 peers 채널: 사내 동료 개발자의 Claude Code 세션과 질문/답변을 주고받는다. 이 세션의 workspace 이름은 "{WORKSPACE}"이고, 질문 수신은 {'켜져 있다' if LISTEN else '꺼져 있다'}.
+이 세션은 "{ROOM}" 방에서 시작했다 — join_room 으로 옮겼다면 그 도구가 돌려준 방이 현재 방이다. 같은 방 세션만 list_peers 에 보이고 질문할 수 있다. 방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 들어올 수 있고 방 이름과 주제는 전원에게 보인다. 방을 근거로 민감한 내용을 공유하지 않는다.
 
 peers 채널 이벤트는 <channel> 태그로 도착하며 kind 속성으로 구분한다.
 - kind="question" (msg_id, from, hops 포함): 동료 Claude의 질문. peer-collab 스킬의 "질문 받기" 규칙을 따르고, 반드시 reply 도구에 msg_id를 넘겨 답한다.
@@ -115,6 +153,32 @@ async def _check_inbox(a: dict) -> str:
 
 async def _set_status(a: dict) -> str:
     return await call_broker("POST", "/api/status", {"summary": a.get("summary"), "listening": a.get("listening")})
+
+
+async def _create_room(a: dict) -> str:
+    return await call_broker("POST", "/api/rooms",
+                             {"subject": a.get("subject"), "name": a.get("name")})
+
+
+async def _join_room(a: dict) -> str:
+    global ROOM, ROOM_SUBJECT
+    out = await call_broker("POST", "/api/rooms/join",
+                            {"room": a.get("room"), "subject": a.get("subject")})
+    # 브로커는 재연결마다 헤더로 Session 을 새로 만든다. 여기서 갱신하지 않으면
+    # 프록시 idle timeout 이나 브로커 재시작 한 번에 기동 시 방으로 조용히 되돌아가고,
+    # 상대는 옮긴 방에 남아 서로를 보지 못한다.
+    try:
+        got = json.loads(out)
+    except Exception:
+        got = {}
+    if isinstance(got.get("room"), str) and ROOM_RE.match(got["room"]):
+        ROOM = got["room"]
+        ROOM_SUBJECT = (got.get("subject") or "")[:200]
+    return out
+
+
+async def _list_rooms(a: dict) -> str:
+    return await call_broker("GET", "/api/rooms")
 
 
 TOOLS: list[tuple[types.Tool, Any]] = [
@@ -188,6 +252,54 @@ TOOLS: list[tuple[types.Tool, Any]] = [
         ),
         _set_status,
     ),
+    (
+        types.Tool(
+            name="create_room",
+            description=(
+                "새 방을 만들고 이름을 돌려준다. 만들기만 하고 입장하지는 않으므로, "
+                "들어가려면 join_room 을 부르거나 PEERS_ROOM 으로 세션을 다시 띄운다. "
+                "방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 "
+                "들어올 수 있고 방 이름과 주제는 전원에게 보인다."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "방 설명 한 줄. 최대 200자"},
+                    "name": {"type": "string", "description": "원하는 방 이름. 생략하면 브로커가 생성"},
+                },
+            },
+        ),
+        _create_room,
+    ),
+    (
+        types.Tool(
+            name="join_room",
+            description=(
+                "이 세션을 다른 방으로 옮긴다. 없는 방이면 새로 생긴다. "
+                "public 으로 부르면 기본 공개 방으로 돌아온다. "
+                "옮겨도 이미 받은 질문에는 계속 reply 할 수 있다. "
+                "방은 대화를 묶는 수단이지 접근 통제가 아니다 — 이름을 아는 사람은 누구나 "
+                "들어올 수 있고 방 이름과 주제는 전원에게 보인다."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "room": {"type": "string", "description": "옮겨갈 방 이름"},
+                    "subject": {"type": "string", "description": "방이 새로 생길 때만 쓰이는 설명"},
+                },
+                "required": ["room"],
+            },
+        ),
+        _join_room,
+    ),
+    (
+        types.Tool(
+            name="list_rooms",
+            description="지금 열려 있는 방 목록. 이름, 주제, 인원을 보여준다. 이 도구만 방 경계를 넘는다.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        _list_rooms,
+    ),
 ]
 BY_NAME = {t.name: (t, fn) for t, fn in TOOLS}
 
@@ -240,14 +352,19 @@ async def connect() -> None:
         return
 
     url = re.sub(r"^http", "ws", BROKER) + "/stream"
-    headers = {
-        "authorization": f"Bearer {TOKEN}",
-        "x-peers-session": SID,
-        "x-peers-workspace": WORKSPACE,
-        "x-peers-listen": "1" if LISTEN else "0",
-    }
     backoff = 1.0
     while True:
+        # 헤더는 매 접속마다 다시 만든다. join_room 으로 옮긴 방이 반영되어야 하고,
+        # 루프 밖에서 한 번만 만들면 재연결이 join_room 을 조용히 되돌린다.
+        headers = {
+            "authorization": f"Bearer {TOKEN}",
+            "x-peers-session": SID,
+            "x-peers-workspace": WORKSPACE,
+            "x-peers-listen": "1" if LISTEN else "0",
+            "x-peers-room": ROOM,
+            # 헤더는 ASCII 만 담으므로 한글 주제는 percent-encode 해서 보낸다. 브로커가 unquote 한다.
+            "x-peers-room-subject": quote(ROOM_SUBJECT),
+        }
         try:
             async with websockets.connect(url, additional_headers=headers, max_size=64 * 1024) as ws:
                 backoff = 1.0

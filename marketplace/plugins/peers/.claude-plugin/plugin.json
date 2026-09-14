@@ -21,6 +21,12 @@
       "description": "플랫폼팀에서 발급받은 개인 토큰 (pk_로 시작)",
       "sensitive": true,
       "required": true
+    },
+    "default_room": {
+      "type": "string",
+      "title": "기본 방",
+      "description": "세션이 기본으로 들어갈 방. PEERS_ROOM 환경변수가 있으면 그것이 우선합니다. 비우면 public.",
+      "required": false
     }
   },
   "mcpServers": {
@@ -34,7 +40,10 @@
       "env": {
         "PEERS_BROKER_URL": "${user_config.broker_url}",
         "PEERS_TOKEN": "${user_config.token}",
-        "PEERS_LISTEN": "${PEERS_LISTEN:-0}"
+        "PEERS_LISTEN": "${PEERS_LISTEN:-0}",
+        "PEERS_DEFAULT_ROOM": "${user_config.default_room}",
+        "PEERS_ROOM": "${PEERS_ROOM:-}",
+        "PEERS_ROOM_SUBJECT": "${PEERS_ROOM_SUBJECT:-}"
       }
     }
   },
