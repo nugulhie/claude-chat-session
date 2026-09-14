@@ -13,3 +13,8 @@ test = ["mcp>=2.0", "websockets>=13", "httpx>=0.27"]
 
 [tool.uv]
 package = false
+
+# 브로커는 라이브러리가 아니라 실행하는 스크립트다. 이게 없으면 setuptools 가
+# server.py 와 issue_token.py 를 최상위 모듈로 자동 탐지하려다 빌드를 거부한다.
+[tool.setuptools]
+py-modules = []
