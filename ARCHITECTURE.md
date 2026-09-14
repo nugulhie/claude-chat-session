@@ -275,12 +275,16 @@ E2E는 프로토콜을 검증하지만 Claude의 판단은 검증하지 않습�
 ### 로컬에서 빠르게 반복하기
 
 ```bash
-claude plugin marketplace add ./marketplace
+claude plugin marketplace add .          # 저장소 루트를 로컬 마켓플레이스로
 claude plugin install peers@acme-internal \
   --config broker_url=http://127.0.0.1:8080 --config token=<토큰>
 ```
 
-로컬 디렉터리를 마켓플레이스로 등록하면 Claude Code는 캐시가 아니라 **원본 경로의 `server.py`를 직접 실행합니다.** 파일을 고치고 새 세션을 띄우면 바로 반영되므로 재설치가 필요 없습니다. 실행 경로는 `claude mcp list`로 확인할 수 있습니다.
+**로컬 디렉터리**로 등록하면 Claude Code는 캐시가 아니라 원본 경로의 `server.py`를 직접 실행합니다. 파일을 고치고 새 세션을 띄우면 바로 반영되므로 재설치가 필요 없습니다 — 개발 중에는 이쪽이 편합니다.
+
+**git 저장소**(`claude plugin marketplace add <owner>/<repo>`)로 등록하면 클론본을 캐시에 두고 거기서 실행합니다. 배포된 상태를 그대로 재현하려면 이쪽을 씁니다. 실행 경로는 `claude mcp list`로 확인할 수 있습니다.
+
+마켓플레이스 매니페스트는 **저장소 루트의 `.claude-plugin/marketplace.json`이어야 합니다.** 하위 폴더에 두면 git으로 받을 때 "Marketplace file not found"로 실패합니다.
 
 ## 알려진 제약
 

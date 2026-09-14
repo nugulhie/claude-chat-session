@@ -68,10 +68,14 @@ uv venv && uv pip install -e ".[test]"
 cd broker && .venv/bin/python tests/e2e.py
 ```
 
-실제 Claude Code 두 세션으로 시험하려면 로컬 마켓플레이스로 설치합니다. 커스텀 채널은 조직 허용 목록에 넣기 전까지 개발용 플래그로만 켤 수 있습니다.
+실제 Claude Code 두 세션으로 시험하려면 플러그인을 설치합니다. 커스텀 채널은 조직 허용 목록에 넣기 전까지 개발용 플래그로만 켤 수 있습니다.
 
 ```bash
-claude plugin marketplace add ./marketplace
+# git 저장소에서 바로 (동료에게 안내할 방법)
+claude plugin marketplace add <owner>/<repo>
+
+# 또는 이 저장소를 클론해 뒀다면 로컬 경로로
+claude plugin marketplace add .
 claude plugin install peers@acme-internal \
   --config broker_url=http://127.0.0.1:8080 --config token=<alice 토큰>
 

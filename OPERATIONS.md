@@ -228,7 +228,14 @@ systemctl start claude-peers
 
 ## 플러그인 배포
 
-`marketplace/` 폴더를 git 저장소로 push하면 마켓플레이스가 됩니다.
+저장소를 push하면 그대로 마켓플레이스가 됩니다. 개발자는 경로를 받을 필요 없이 저장소 이름만 있으면 됩니다.
+
+```bash
+claude plugin marketplace add <owner>/<repo>
+claude plugin install peers@acme-internal --config broker_url=<주소> --config token=<토큰>
+```
+
+**매니페스트는 저장소 루트의 `.claude-plugin/marketplace.json`이어야 합니다.** 하위 폴더에 두면 git으로 받을 때 "Marketplace file not found"로 실패합니다. 비공개 저장소면 개발자에게 git 접근 권한이 있어야 합니다.
 
 **개발자 머신에 `uv`가 필요합니다.** 채널 서버는 `uv run --script`로 뜨고, 의존성은 스크립트 첫머리의 PEP 723 메타데이터에 선언돼 있어 uv가 알아서 받아 캐시합니다. Claude Code는 플러그인 의존성을 설치해 주지 않으므로(2.1.268에서 확인), uv에 맡기는 이 방식이 설치 경로에서 의존성이 빠지는 사고를 구조적으로 막아 줍니다.
 
