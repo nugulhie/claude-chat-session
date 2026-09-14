@@ -16,7 +16,7 @@
 
 `https://`로 노출하세요. 채널 서버는 URL의 `http`를 `ws`로 바꿔 `/stream`에 연결하므로 `https` → `wss`가 됩니다. **WebSocket upgrade가 통과해야 합니다.**
 
-nginx 예시입니다.
+`deploy/nginx-claude-peers.conf` 에 파일로 있습니다. 도메인과 인증서만 채우면 됩니다.
 
 ```nginx
 location / {
@@ -42,6 +42,8 @@ ALB를 쓴다면 idle timeout을 기본값(60초)에서 늘리세요. 브로커�
 이중화가 필요하면 presence와 푸쉬를 Redis pub/sub으로 옮겨야 합니다. DB는 이미 파일이므로 그것부터 공유 스토리지나 다른 엔진으로 바꿔야 합니다.
 
 ### systemd 예시
+
+`deploy/claude-peers.service` 에 같은 내용이 파일로 있습니다. `deploy/install.sh` 가 설치해 줍니다.
 
 ```ini
 [Unit]

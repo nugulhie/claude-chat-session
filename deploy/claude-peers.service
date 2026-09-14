@@ -1,0 +1,37 @@
+[Unit]
+Description=Claude Peers broker
+After=network.target
+
+[Service]
+Type=simple
+User=peers
+Group=peers
+WorkingDirectory=/opt/claude-peers/broker
+ExecStart=/opt/claude-peers/broker/.venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+# 리버스 프록시만 외부에 노출한다. 브로커 자체는 TLS 를 하지 않는다.
+Environment=PORT=8080
+Environment=HOST=127.0.0.1
+Environment=PEERS_DB=/var/lib/claude-peers/peers.db
+Environment=PEERS_TOKENS=/var/lib/claude-peers/tokens.json
+
+# 기본값을 쓰지 않을 때만 주석을 푼다
+#Environment=QUESTION_TTL_SEC=900
+#Environment=INBOX_TTL_SEC=86400
+#Environment=MAX_HOPS=1
+#Environment=LIMIT_PER_USER=30
+#Environment=LIMIT_PER_PAIR=10
+#Environment=ROOM_RESERVE_SEC=1800
+#Environment=MAX_RESERVED_PER_USER=5
+
+# 이 프로세스가 쓸 곳은 데이터 디렉터리 하나뿐이다
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/claude-peers
+
+[Install]
+WantedBy=multi-user.target

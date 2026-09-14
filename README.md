@@ -82,6 +82,12 @@ alice의 Claude가 `ask_peer`를 호출하면 브로커가 bob의 채널 서버�
 
 ```bash
 git clone <이 저장소> /opt/claude-peers
+sudo /opt/claude-peers/deploy/install.sh
+```
+
+`deploy/install.sh` 가 전용 계정·데이터 디렉터리·venv·systemd 유닛까지 만들고 기동 확인까지 합니다. 여러 번 돌려도 안전합니다. 직접 하시려면 아래와 같습니다.
+
+```bash
 cd /opt/claude-peers/broker
 uv venv && uv pip install -e .
 ```
@@ -104,6 +110,8 @@ PEERS_TOKENS=/var/lib/claude-peers/tokens.json .venv/bin/python issue_token.py a
 운영에서는 `server.py`의 `authenticate()`를 사내 SSO/OIDC 검증으로 교체하는 것을 권합니다. 함수 하나만 바꾸면 되도록 격리해 뒀습니다.
 
 ### 2.3 상시 가동
+
+`deploy/claude-peers.service` 를 그대로 쓰면 됩니다(`install.sh` 가 설치합니다).
 
 ```ini
 # /etc/systemd/system/claude-peers.service
@@ -131,6 +139,8 @@ WantedBy=multi-user.target
 `HOST=127.0.0.1`로 묶고 프록시만 외부에 노출하세요. 브로커 자체는 TLS를 하지 않습니다.
 
 ### 2.4 리버스 프록시
+
+`deploy/nginx-claude-peers.conf` 에 도메인과 인증서만 채우면 됩니다.
 
 `https://`로 노출합니다. 채널 서버가 URL의 `http`를 `ws`로 바꿔 `/stream`에 연결하므로 `https` → `wss`가 됩니다. **WebSocket upgrade가 통과해야 합니다.**
 
