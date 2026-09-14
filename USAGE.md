@@ -20,7 +20,7 @@ claude --channels plugin:peers@claude-peers
 cd ~/work/billing-api
 PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
-  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"
+  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit" "Monitor" "Agent" "Workflow"
 ```
 
 왜 나누냐면 두 가지 이유가 있습니다. 작업 세션의 컨텍스트가 남의 질문으로 오염되지 않고, 응답 세션은 읽기 전용으로 묶어 둘 수 있습니다. 질문 본문은 결국 다른 사람의 Claude가 쓴 텍스트이므로, 도구를 제한해 두는 것이 가장 확실한 방어입니다.
@@ -33,7 +33,7 @@ alias로 만들어 두면 편합니다.
 alias cc='claude --channels plugin:peers@claude-peers'
 alias cc-listen='PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
-  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"'
+  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit" "Monitor" "Agent" "Workflow"'
 ```
 
 > 조직 managed settings에 `allowedChannelPlugins`가 아직 배포되지 않았다면 `--channels` 대신 `--dangerously-load-development-channels`를 씁니다. 플래그 이름만 다르고 사용법은 같습니다.
@@ -134,7 +134,62 @@ context: payments-web에서 취소 웹훅 중복 수신 버그를 보는 중.
 
 답은 **동료 Claude의 조사 결과이지 검증된 사실이 아닙니다.** 코드 변경의 근거로 쓰기 전에 가능한 범위에서 확인하세요. 특히 파일 경로와 라인 번호는 상대 워크스페이스 기준이라 내 쪽에서는 검증되지 않은 값입니다.
 
-## 6. 안 될 때
+## 6. 끊기
+
+### 잠깐 질문만 안 받기
+
+세션은 그대로 두고 수신만 끕니다. Claude에게 말하면 됩니다.
+
+```
+질문 그만 받아
+```
+
+`set_status`로 `listening`이 꺼지고, 동료의 `list_peers`에서 "수신 안 함"으로 보입니다. 그 상태로 온 질문은 404로 거부되고, 상대는 대신 물어볼 수 있는 대상 목록을 받습니다.
+
+다시 받으려면 "질문 다시 받아"라고 하면 됩니다.
+
+> 플러그인 0.4.0 이전에는 이렇게 끈 수신이 **재연결 한 번에 조용히 되돌아갔습니다.** 프록시 idle timeout이나 브로커 재시작이면 충분했습니다. 0.4.0부터 유지됩니다.
+
+### 방에서 나오기
+
+방을 떠나는 별도 도구는 없습니다. `public`으로 옮기면 됩니다.
+
+```
+public 방으로 돌아가줘
+```
+
+방은 메모리에만 있고 **마지막 사람이 나가면 사라집니다.** 방을 비우면 그 이름과 주제는 없어지고, 같은 이름으로 다시 들어가면 새 방입니다.
+
+### 세션 끝내기
+
+그냥 Claude Code를 종료하면 됩니다(`/exit` 또는 Ctrl-D). 브로커가 연결이 끊긴 것을 보고 세션을 목록에서 지우므로, 따로 정리할 것은 없습니다.
+
+끝낼 때 알아 둘 것이 두 가지 있습니다.
+
+- **나에게 온 답변은 사라지지 않습니다.** 24시간 보관되고, 같은 `user@workspace`로 다시 접속하면 재전달됩니다. 안 왔으면 `check_inbox`를 시키세요.
+- **내가 답하지 않고 나간 질문은 15분 뒤 만료됩니다.** 질문한 사람에게 만료 알림이 가고, 그 뒤에는 답해도 410으로 거부됩니다. 조사 중이던 질문이 있으면 나가기 전에 답하거나, 상대에게 알려 주세요.
+
+응답 전용 세션을 상시 띄워 두는 경우, 자리를 비울 때 끄는 편이 낫습니다. 켜져 있는데 아무도 답을 못 하면 질문자는 15분을 기다린 뒤에야 만료 알림을 받습니다.
+
+### 플러그인 내리기
+
+잠시 안 쓸 거면 지우지 말고 끄세요. 설정과 토큰이 남습니다.
+
+```bash
+claude plugin disable peers@claude-peers
+claude plugin enable peers@claude-peers     # 다시 켤 때
+```
+
+완전히 제거하려면:
+
+```bash
+claude plugin uninstall peers@claude-peers
+claude plugin marketplace remove claude-peers   # 마켓플레이스 등록까지 지울 때
+```
+
+**토큰은 이걸로 무효화되지 않습니다.** 퇴사·기기 분실처럼 토큰 자체를 못 쓰게 해야 하면 브로커 운영자가 폐기해야 합니다([OPERATIONS.md](OPERATIONS.md#토큰-운영)).
+
+## 7. 안 될 때
 
 ### 답이 안 와요
 
@@ -227,7 +282,7 @@ PEERS_WORKSPACE=payments-web claude --channels plugin:peers@claude-peers
 
 받은 질문을 처리하다 또 다른 동료에게 묻는 것은 기본 1단계까지만 허용됩니다. 무한히 퍼지는 것을 막기 위해서입니다.
 
-## 7. 알아 둘 것
+## 8. 알아 둘 것
 
 **푸쉬는 세션이 열려 있을 때만 도착합니다.** Claude가 작업 중이면 이벤트가 쌓였다가 다음 턴에 한꺼번에 처리됩니다.
 
@@ -251,3 +306,94 @@ Claude가 알아서 부르므로 직접 외울 필요는 없지만, 권한 설�
 | `list_rooms` | 열려 있는 방 목록 (이름, 주제, 인원) |
 
 권한 설정에 쓸 전체 이름은 `mcp__plugin_peers_peers__<도구이름>` 형식입니다.
+
+## 권한 설정
+
+기본값 그대로 쓰면 도구를 부를 때마다 승인 프롬프트가 뜹니다. 응답 전용 세션에서는 이게 치명적입니다 — 사람이 승인할 때까지 멈춰 있고, 그동안 15분 TTL이 흘러 질문이 만료됩니다.
+
+판단 기준은 하나입니다. **내 것이 밖으로 나가는 도구인가.**
+
+| 도구 | 권장 | 왜 |
+|---|---|---|
+| `list_peers`, `list_rooms`, `check_inbox` | **allow** | 읽기만 합니다. 나가는 정보가 없습니다 |
+| `set_status`, `create_room`, `join_room` | **allow** | 내 상태/방만 바꿉니다. 요약에 민감한 내용을 넣지 않게만 주의하세요 |
+| `reply` | 응답 세션만 **allow** | 답에 코드가 실려 나가지만, 안 걸어 두면 세션이 멈춥니다 |
+| `ask_peer` | **allow 하지 않음** | 내 코드 컨텍스트가 밖으로 나가는 유일한 지점입니다. 한 번 보고 승인하세요 |
+
+### 작업 세션
+
+`ask_peer`만 빼고 허용합니다.
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_peers_peers__list_peers",
+      "mcp__plugin_peers_peers__list_rooms",
+      "mcp__plugin_peers_peers__check_inbox",
+      "mcp__plugin_peers_peers__set_status",
+      "mcp__plugin_peers_peers__create_room",
+      "mcp__plugin_peers_peers__join_room"
+    ]
+  }
+}
+```
+
+`~/.claude/settings.json`에 넣으면 전역, 레포의 `.claude/settings.json`에 넣으면 그 레포에만 적용됩니다.
+
+### 응답 전용 세션
+
+여기서는 **허용보다 차단이 중요합니다.** 들어오는 질문은 다른 사람의 Claude가 쓴 텍스트이고, 본문이 무엇을 시키든 실행되면 안 됩니다. 도구를 아예 막아 두는 것이 프롬프트로 타이르는 것보다 확실합니다.
+
+```bash
+PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
+  --allowedTools "mcp__plugin_peers_peers__reply" \
+  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit" "Monitor" "Agent" "Workflow"
+```
+
+**`Bash` 하나만 막는 것으로는 부족합니다.** `Bash`만 `--disallowedTools`에 넣고 시험해 봤더니, Claude가 `Monitor`로 같은 셸 명령을 실행했습니다. 명령을 실행할 수 있는 도구가 `Bash` 말고도 있고, 막힌 도구가 있으면 다른 경로를 찾습니다. `Agent`와 `Workflow`도 같은 이유로 넣습니다 — 서브에이전트에게 시키면 우회가 됩니다.
+
+확인한 동작은 이렇습니다.
+
+- `--disallowedTools`는 `--allowedTools`보다 **우선합니다.** 둘 다에 `Bash`를 넣으면 거부됩니다.
+- 파일 쓰기 차단(`Write`, `Edit`, `NotebookEdit`)은 **서브에이전트까지 전파됩니다.** 실제로 `Write`를 막고 파일 생성을 시켰더니 서브에이전트 경로까지 막혀 파일이 만들어지지 않았습니다.
+- 위 7개를 모두 막으면 셸 명령이 실행되지 않습니다.
+
+조사에 필요한 `Read`, `Grep`, `Glob`은 그대로 남습니다.
+
+레포마다 고정하려면 `.claude/settings.json`에 적어 둡니다.
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__plugin_peers_peers__reply"],
+    "deny": ["Bash", "Edit", "Write", "NotebookEdit", "Monitor", "Agent", "Workflow"]
+  }
+}
+```
+
+### 다른 MCP 서버가 같이 붙어 있습니다
+
+응답 전용 세션에도 평소 쓰는 MCP 서버(Slack, Gmail, 사내 API 등)가 **그대로 붙습니다.** 도구를 막아도 이쪽은 남습니다. 질문 본문이 "슬랙에 이거 올려줘" 같은 것을 요구할 수 있는 경로입니다.
+
+지금 붙어 있는 것을 확인하세요.
+
+```bash
+claude mcp list
+```
+
+필요 없는 것은 응답 세션에서 빼는 편이 안전합니다. `--strict-mcp-config`는 `--mcp-config`로 준 것만 쓰고 나머지를 무시하며, `--restricted`는 명령 실행 계열 도구를 빼고 사용자·프로젝트 설정을 무시합니다.
+
+> **이 두 플래그를 peers 채널과 함께 쓸 때 채널이 정상 동작하는지는 아직 확인하지 못했습니다.** 응답 세션에 적용하기 전에, 실제로 질문이 오가는지 먼저 시험해 보세요.
+
+### 조직 전체에 강제하기
+
+개인이 못 풀게 하려면 managed settings에 넣습니다. 경로와 배포 방법은 [OPERATIONS.md](OPERATIONS.md)를 보세요.
+
+**`ask_peer`를 조직 차원에서 allow에 넣지 마세요.** 한 번 넣으면 모든 세션이 사람 확인 없이 코드 컨텍스트를 밖으로 보낼 수 있게 됩니다.
+
+### 하지 말아야 할 것
+
+- **`--dangerously-skip-permissions`와 같이 쓰지 마세요.** 특히 응답 세션에서는, 남이 보낸 텍스트가 아무 도구나 부를 수 있게 됩니다.
+- **`ask_peer`를 자동 허용하지 마세요.** 위 표의 이유 그대로입니다.
+- **permission relay를 켜지 마세요.** 채널 서버는 `claude/channel/permission`을 일부러 선언하지 않습니다. 선언하면 채널로 메시지를 보낼 수 있는 사람이 내 세션의 도구 사용을 승인할 수 있게 됩니다.

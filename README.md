@@ -246,7 +246,7 @@ claude --channels plugin:peers@claude-peers
 cd ~/work/billing-api
 PEERS_LISTEN=1 claude --channels plugin:peers@claude-peers \
   --allowedTools "mcp__plugin_peers_peers__reply" \
-  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit"
+  --disallowedTools "Bash" "Edit" "Write" "NotebookEdit" "Monitor" "Agent" "Workflow"
 ```
 
 나누는 이유는 두 가지입니다. 작업 세션의 컨텍스트가 남의 질문으로 오염되지 않고, 응답 세션을 읽기 전용으로 묶어 둘 수 있습니다. **질문 본문은 결국 다른 사람의 Claude가 쓴 텍스트이므로, 도구 제한이 가장 확실한 방어입니다.**
@@ -358,7 +358,7 @@ PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:peers@claud
 - **모든 질문과 답변은 브로커 DB에 남습니다.** 누가 누구에게 무엇을 묻고 답했는지 전부 기록되는 감사 로그입니다.
 - `MCP_PROTOCOL_NEGOTIATION=auto`를 설정하지 마세요. 새 프로토콜 리비전으로 협상하면 채널로 등록되지 않습니다.
 
-채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#6-안-될-때)에 있습니다.
+채널이 안 붙을 때의 진단 순서는 [USAGE.md](USAGE.md#7-안-될-때)에 있습니다.
 
 ---
 

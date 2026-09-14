@@ -249,7 +249,7 @@ systemctl start claude-peers
 | 질문이 429 | 정상 동작입니다. 필요하면 `LIMIT_PER_PAIR`를 올리세요 |
 | 기동하자마자 죽는다 | `python -V`가 3.11 이상인지, `aiohttp`가 설치돼 있는지 |
 
-개발자 쪽 문제(채널이 안 붙음, "설정이 비어 있습니다")는 [USAGE.md의 진단 순서](USAGE.md#6-안-될-때)를 안내하세요. 대부분 브로커가 아니라 클라이언트 쪽 `uv` 설치 여부나 연결 실패 캐시입니다.
+개발자 쪽 문제(채널이 안 붙음, "설정이 비어 있습니다")는 [USAGE.md의 진단 순서](USAGE.md#7-안-될-때)를 안내하세요. 대부분 브로커가 아니라 클라이언트 쪽 `uv` 설치 여부나 연결 실패 캐시입니다.
 
 특정 개인이 안 붙는다는 제보를 받으면 **브로커 로그에서 그 사람의 `connect` 줄을 먼저 찾으세요.** 줄이 없으면 요청이 서버에 닿지도 않은 것이라 서버 쪽에서 더 볼 것이 없습니다. `deploy/doctor.py <브로커주소> <토큰>`을 그 사람 머신에서 돌리게 하면 원인이 한 번에 나옵니다.
 
@@ -282,6 +282,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 - `extraKnownMarketplaces`의 source를 사내 git 호스팅에 맞게 바꿉니다
 - `pluginConfigs`로 `broker_url`을 미리 채워 두면 개발자는 토큰만 입력하면 됩니다
 - 읽기 계열 도구(`list_peers`, `check_inbox`, `set_status`)만 permission allow에 넣고, `ask_peer`는 넣지 마세요. 내 코드 컨텍스트가 밖으로 나가는 순간은 사람이 한 번 보는 편이 안전합니다
+- 응답 전용 세션의 deny 목록은 `Bash` 하나로 부족합니다. `Monitor`, `Agent`, `Workflow` 까지 넣어야 셸 실행이 막힙니다 (`Bash` 만 막으면 `Monitor` 로 같은 명령이 실행되는 것을 확인했습니다). 전체 목록은 [USAGE.md의 권한 설정](USAGE.md#권한-설정)에 있습니다
 
 claude.ai Team/Enterprise 조직은 Owner가 **Admin settings → Claude Code → Channels**에서 채널을 켜야 합니다. 꺼져 있으면 도구는 동작하지만 푸쉬가 도착하지 않습니다.
 

@@ -192,7 +192,19 @@ async def _check_inbox(a: dict) -> str:
 
 
 async def _set_status(a: dict) -> str:
-    return await call_broker("POST", "/api/status", {"summary": a.get("summary"), "listening": a.get("listening")})
+    global LISTEN
+    out = await call_broker("POST", "/api/status",
+                            {"summary": a.get("summary"), "listening": a.get("listening")})
+    # join_room 과 같은 이유로 갱신한다. 브로커는 재연결마다 헤더로 Session 을 새로
+    # 만들기 때문에, 여기서 LISTEN 을 그대로 두면 프록시 idle timeout 한 번에
+    # "질문 그만 받아"가 조용히 풀린다. 끈 줄 알고 있는데 다시 받는 쪽이 더 나쁘다.
+    try:
+        got = json.loads(out)
+    except Exception:
+        return out
+    if isinstance(got.get("listening"), bool):
+        LISTEN = got["listening"]
+    return out
 
 
 async def _create_room(a: dict) -> str:

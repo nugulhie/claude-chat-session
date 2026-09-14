@@ -535,6 +535,20 @@ def main() -> int:
         mover.close()
         ok("join_room 으로 옮긴 방이 재연결 후에도 유지된다")
 
+        # 22-b. set_status 로 끈 수신도 재연결 후에도 꺼져 있어야 한다.
+        #       끈 줄 알고 있는데 다시 받는 쪽이, 아예 못 끄는 것보다 나쁘다.
+        quiet = peer("bob", "quiet-ws", True)
+        assert quiet.call("set_status", {"listening": False})["data"]["listening"] is False
+        restart_broker()
+        q_back = wait_for(lambda: my_row(quiet), "quiet 재연결", 30)
+        assert q_back["listening"] is False, "재연결하며 수신이 다시 켜졌다"
+        # 다시 켜는 것도 같은 경로로 유지돼야 한다
+        assert quiet.call("set_status", {"listening": True})["data"]["listening"] is True
+        restart_broker()
+        assert wait_for(lambda: my_row(quiet), "quiet 재연결 2", 30)["listening"] is True
+        quiet.close()
+        ok("set_status 로 끈 수신이 재연결 후에도 꺼져 있다")
+
         # 23. subject 는 첫 등록자만 설정한다 (스펙 시나리오 9)
         subj1 = peer("alice", "subj-1", True, room="SUBJ-ROOM", subject="첫 주제")
         subj2 = peer("bob", "subj-2", True, room="SUBJ-ROOM", subject="나중 주제")
