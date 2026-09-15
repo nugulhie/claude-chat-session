@@ -56,6 +56,7 @@ alice의 Claude가 `ask_peer`를 호출하면 브로커가 bob의 채널 서버�
 | [OPERATIONS.md](OPERATIONS.md) | 브로커 운영자 | 배포, 토큰, 백업, 모니터링, 보관 정책, 장애 대응 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 기여자 | 설계 결정, Claude Code 연동 방식, 개발·검증 방법 |
 | [INTERNALS.md](INTERNALS.md) | 기여자 | 인프라 토폴로지, 메시지 흐름, 상태 머신, 실패 경로 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 기여자 | 브랜치 흐름, 릴리스 절차, CI, 테스트 돌리는 법 |
 
 ---
 

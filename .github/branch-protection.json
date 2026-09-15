@@ -1,0 +1,15 @@
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "e2e (3.11)",
+      "e2e (3.12)",
+      "docs"
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}

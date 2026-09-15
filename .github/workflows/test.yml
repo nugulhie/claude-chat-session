@@ -1,0 +1,66 @@
+name: test
+
+# 머지를 막는 관문이다. release-* → main 이 본 목적이고, develop 으로 가는 PR 에서도
+# 돌려서 release 브랜치를 자를 때 처음 깨지는 일이 없게 한다.
+#
+# 주의: 이 워크플로가 있다고 머지가 막히지는 않는다. main 에 branch protection 을
+# 걸고 이 job 을 required status check 로 지정해야 실제로 막힌다. README 참고.
+on:
+  pull_request:
+    branches: [main, develop]
+  # release 브랜치에 직접 push 했을 때도 확인한다. PR 을 열기 전에 깨진 것을 본다.
+  push:
+    branches: ['release-*', develop]
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 은 pyproject 가 선언한 최소 버전이다. 선언만 하고 시험하지 않으면
+        # 그 버전 사용자만 깨진다 — 이 프로젝트에서 실제로 겪은 일이다.
+        python: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 파이썬 ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: 의존성
+        working-directory: broker
+        run: |
+          uv venv --python ${{ matrix.python }} .venv
+          uv pip install --python .venv/bin/python -r requirements.txt
+          # 채널 서버를 같은 인터프리터로 띄우므로 그쪽 의존성도 필요하다.
+          # pyproject 의 test extra 와 같은 목록이다.
+          uv pip install --python .venv/bin/python \
+            "mcp>=2.0" "websockets>=13" "httpx>=0.27" certifi
+
+      - name: E2E
+        working-directory: broker
+        run: .venv/bin/python tests/e2e.py
+
+  # 문서의 상대 링크가 깨졌는지 본다. 섹션 번호를 밀면 조용히 깨진다.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 링크 확인
+        run: python3 .github/scripts/check_links.py

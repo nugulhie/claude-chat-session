@@ -1,0 +1,111 @@
+name: release
+
+# main 에 머지되면 릴리스를 만든다. 버전은 플러그인의 plugin.json 에서 읽는다 —
+# 사용자가 실제로 받는 물건의 버전이 그것이고, 캐시 디렉터리 이름도 이 값이다.
+#
+# 같은 버전으로 두 번 머지되면(문서만 고친 경우 등) 태그가 이미 있으므로 건너뛴다.
+# 릴리스를 내고 싶으면 plugin.json 의 version 을 올려서 머지하면 된다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 이전 태그를 찾아 변경 목록을 만든다
+
+      - name: 버전 읽기
+        id: v
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import json;print(json.load(open('marketplace/plugins/peers/.claude-plugin/plugin.json'))['version'])")
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "plugin.json 의 version 이 x.y.z 형식이 아닙니다: $version" >&2; exit 1 ;;
+          esac
+          echo "version=$version"   >> "$GITHUB_OUTPUT"
+          echo "tag=v$version"      >> "$GITHUB_OUTPUT"
+
+      - name: 이미 낸 버전인지 확인
+        id: check
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG 태그가 이미 있습니다. 릴리스를 건너뜁니다."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 릴리스는 "테스트를 통과한 코드"여야 한다. PR 로 들어왔다면 관문에서 이미
+      # 돌았지만, 관리자가 직접 push 하면 그 관문을 지나지 않는다. 여기서 한 번 더 본다.
+      - name: uv 설치
+        if: steps.check.outputs.skip == 'false'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: E2E
+        if: steps.check.outputs.skip == 'false'
+        working-directory: broker
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -r requirements.txt
+          uv pip install --python .venv/bin/python \
+            "mcp>=2.0" "websockets>=13" "httpx>=0.27" certifi
+          .venv/bin/python tests/e2e.py
+
+      - name: 변경 목록
+        if: steps.check.outputs.skip == 'false'
+        id: notes
+        run: |
+          set -euo pipefail
+          prev=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          {
+            if [ -n "$prev" ]; then
+              echo "### $prev 이후 변경"
+              echo
+              git log --no-merges --pretty='- %s' "$prev..HEAD"
+            else
+              echo "### 첫 릴리스"
+              echo
+              git log --no-merges --pretty='- %s' | head -50
+            fi
+            echo
+            echo "### 설치"
+            echo
+            echo '```bash'
+            echo 'claude plugin marketplace update claude-peers'
+            echo 'claude plugin update peers@claude-peers'
+            echo '```'
+            echo
+            echo '적용하려면 Claude Code 를 재시작해야 합니다.'
+          } > notes.md
+          echo "생성된 릴리스 노트:"
+          cat notes.md
+
+      - name: 릴리스 생성
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA"
+          echo "릴리스 $TAG 를 만들었습니다."
